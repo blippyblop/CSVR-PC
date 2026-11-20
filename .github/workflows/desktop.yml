@@ -66,8 +66,12 @@ jobs:
         run: |
           export WINEDEBUG=-all
           export LIBGL_ALWAYS_SOFTWARE=1
-          export WINEPATH="$(winepath -w "$PWD/stage-desktop/windows-x86_64")"
-          xvfb-run -a wine build-desktop/windows-client/csvr-xr-context-test.exe
+          export WINEPREFIX="$PWD/build-desktop/wine-context"
+          export WINEARCH=win64
+          xvfb-run -a -s '-screen 0 1280x720x24 +extension GLX +render -noreset' bash -c '
+            export WINEPATH="$(winepath -w "$PWD/stage-desktop/windows-x86_64")"
+            wine build-desktop/windows-client/csvr-xr-context-test.exe
+          '
       - uses: actions/upload-artifact@v4
         with:
           name: CSVR-PC-${{ matrix.target }}-x86_64
