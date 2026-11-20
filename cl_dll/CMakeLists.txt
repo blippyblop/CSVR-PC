@@ -51,9 +51,15 @@ include_directories(
 
 add_definitions(-DCLIENT_WEAPONS -DCLIENT_DLL -DSTDINT_H=<cstdint>)
 
-if(NOT MSVC)
+if(NOT WIN32)
 	add_definitions(-DLINUX -D_LINUX)
-	add_definitions(-Dstricmp=strcasecmp -D_strnicmp=strncasecmp -Dstrnicmp=strncasecmp -fms-extensions)
+endif()
+
+if(NOT MSVC)
+	add_compile_options(-fms-extensions)
+	if(NOT WIN32)
+		add_definitions(-Dstricmp=strcasecmp -D_strnicmp=strncasecmp -Dstrnicmp=strncasecmp)
+	endif()
 else()
 	add_definitions(-D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_DEPRECATE)
 endif()
@@ -83,4 +89,8 @@ install(TARGETS ${CLIENT_LIB}
 if(MSVC)
 	install(FILES $<TARGET_PDB_FILE:${CLIENT_LIB}>
 		DESTINATION "${GAME_DIR}/${CLIENT_INSTALL_DIR}/" OPTIONAL)
+endif()
+
+if(UNIX AND NOT APPLE)
+	target_link_options(client PRIVATE -Wl,--no-undefined)
 endif()

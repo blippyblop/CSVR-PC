@@ -65,3 +65,9 @@ release/
 *.tasks
 regamebuild/
 .vs/
+# Desktop OpenXR build and staging artifacts
+/build-desktop/
+/stage-desktop/
+
+/game-data/
+/scripts/desktop/__pycache__/

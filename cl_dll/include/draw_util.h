@@ -148,8 +148,15 @@ public:
 	static inline int TextMessageDrawChar( int x, int y, int number, int r, int g, int b, float scale = 0.0f )
 	{
 		int ret;
-		if( scale && g_iMobileAPIVersion )
-			ret = gMobileAPI.pfnDrawScaledCharacter( x, y, number, r, g, b, scale ) / gHUD.m_flScale;
+		if( scale && g_iMobileAPIVersion ) {
+			ret = gMobileAPI.pfnDrawScaledCharacter( x, y, number, r, g, b, scale );
+#ifndef __ANDROID__
+			/* Xash returns the scaled advance in logical HUD coordinates.
+			 * Dividing again overlaps glyphs when the XR canvas is scaled. */
+			if (gEngfuncs.pfnGetCvarFloat("vr_enabled") < 0.5f)
+#endif
+				ret /= gHUD.m_flScale;
+		}
 		else
 			ret = gEngfuncs.pfnDrawCharacter( x, y, number, r, g, b );
 		return ret;

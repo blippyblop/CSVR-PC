@@ -26,6 +26,9 @@
 *
 */
 
+#include <cmath>
+#include <algorithm>
+#include <limits>
 #include "port.h"
 
 #include <string.h>

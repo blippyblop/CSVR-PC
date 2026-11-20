@@ -15,6 +15,9 @@
 
 // Big thanks to Chicken Fortress developers
 // for this code.
+#include <climits>
+#include <fstream>
+#include <vector>
 #include <assert.h>
 #include "hud.h"
 #include "cl_util.h"
@@ -41,9 +44,6 @@
 #include "pm_defs.h"
 
 #include "com_weapons.h"
-
-#include <fstream>
-#include <vector>
 
 extern CGameStudioModelRenderer g_StudioRenderer;
 extern engine_studio_api_t IEngineStudio;
@@ -1470,6 +1470,7 @@ void CStudioModelRenderer::StudioDrawShadow( Vector origin, float scale )
 
 bool CStudioModelRenderer::IsVROffHand()
 {
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") < 0.5f) return false;
 	char* modelname = m_pCurrentEntity->model->name;
 	if (strcmp(modelname, "models/v_hand.mdl") == 0) {
 		return true;
@@ -1483,6 +1484,7 @@ bool CStudioModelRenderer::IsVROffHand()
 
 bool CStudioModelRenderer::IsVRShield()
 {
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") < 0.5f) return false;
 	char* prefixShield = "models/shield/v_";
 	char* modelname = m_pCurrentEntity->model->name;
 	if (strncmp(modelname, prefixShield, strlen(prefixShield)) == 0) {
@@ -1493,6 +1495,7 @@ bool CStudioModelRenderer::IsVRShield()
 
 bool CStudioModelRenderer::IsVRDualHandWeapon()
 {
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") < 0.5f) return false;
 	char* modelname = m_pCurrentEntity->model->name;
 	if (strcmp(modelname, "models/v_elite.mdl") == 0) {
 		return true;
@@ -1516,6 +1519,7 @@ bool CStudioModelRenderer::IsVRSingleHandWeapon()
 
 bool CStudioModelRenderer::IsVRWeapon()
 {
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") < 0.5f) return false;
 	char* prefixWeapon = "/v_";
 	char* modelname = m_pCurrentEntity->model->name;
 	return strstr(modelname, prefixWeapon) != nullptr;
@@ -1524,7 +1528,8 @@ bool CStudioModelRenderer::IsVRWeapon()
 void CStudioModelRenderer::UpdateVRCalibration()
 {
 	char* modelname = m_pCurrentEntity->model->name;
-	char* calibrationFile = "/sdcard/xash/cstrike/models/vr_weapons.cfg";
+	char calibrationFile[1024];
+	snprintf(calibrationFile, sizeof(calibrationFile), "%s/models/vr_weapons.cfg", gEngfuncs.pfnGetGameDirectory());
 	if (gEngfuncs.pfnGetCvarFloat("vr_weapon_calibration_update") > 0) {
 		// Read existing calibrations except the current one
 		std::string line;
@@ -1541,6 +1546,11 @@ void CStudioModelRenderer::UpdateVRCalibration()
 
 		// Rewrite the calibrations
 		FILE* fos = fopen(calibrationFile, "w");
+		if (!fos) {
+			gEngfuncs.Con_Printf("Could not write weapon calibration: %s\n", calibrationFile);
+			gEngfuncs.Cvar_SetValue("vr_weapon_calibration_update", 0);
+			return;
+		}
 		for (std::string& s : data) {
 			fprintf(fos, "%s\n", s.c_str());
 		}

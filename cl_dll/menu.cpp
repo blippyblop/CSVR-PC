@@ -52,7 +52,15 @@ int CHudMenu :: Init( void )
 	HOOK_COMMAND( gHUD.m_Menu, "client_buy_close", OldStyleMenuClose );
 	HOOK_COMMAND( gHUD.m_Menu, "showvguimenu", ShowVGUIMenu );
 
-	_extended_menus = CVAR_CREATE("_extended_menus", "1", FCVAR_ARCHIVE);
+	_extended_menus = CVAR_CREATE("_extended_menus",
+#ifdef __ANDROID__
+		"1",
+#else
+		"0",
+#endif
+		FCVAR_ARCHIVE);
+	CVAR_CREATE("vr_menu_slots", "0", 0);
+	CVAR_CREATE("vr_menu_selection", "0", 0);
 
 	InitHUDData();
 
@@ -65,6 +73,7 @@ void CHudMenu :: InitHUDData( void )
 {
 	m_fMenuDisplayed = 0;
 	m_bitsValidSlots = 0;
+	gEngfuncs.Cvar_SetValue("vr_menu_slots", 0);
 	Reset();
 }
 
@@ -109,12 +118,32 @@ int CHudMenu :: Draw( float flTime )
 	// center it
 	int y = (ScreenHeight/2) - ((nlc/2)*12) - 40; // make sure it is above the say text
 	int x = 20;
+	int lineHeight=24, maxX=320;
+	float menuScale=0;
+#ifndef __ANDROID__
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0) {
+		lineHeight=32; menuScale=2;
+		x=(ScreenWidth>704 ? (ScreenWidth-640)/2 : 32);
+		y=(ScreenHeight-nlc*lineHeight)/2-40;
+		maxX=ScreenWidth-32;
+	}
+#endif
 
 	i = 0;
 	while ( i < MAX_MENU_STRING && g_szMenuString[i] != '\0' )
 	{
-		DrawUtils::DrawHudString( x, y, 320, g_szMenuString + i, 255, 255, 255 );
-		y += 24;
+#ifndef __ANDROID__
+		if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0) {
+			const char* entry=g_szMenuString+i;
+			while (*entry=='\\' && entry[1]) entry+=2;
+			while (*entry==' ') ++entry;
+			int slot=*entry=='0' ? 10 : *entry>='1' && *entry<='9' ? *entry-'0' : 0;
+			if (slot && slot==(int)gEngfuncs.pfnGetCvarFloat("vr_menu_selection"))
+				DrawUtils::DrawHudString(x-20, y, maxX, ">", 255, 200, 0, menuScale);
+		}
+#endif
+		DrawUtils::DrawHudString( x, y, maxX, g_szMenuString + i, 255, 255, 255, menuScale );
+		y += lineHeight;
 
 		while ( i < MAX_MENU_STRING && g_szMenuString[i] != '\0' && g_szMenuString[i] != '\n' )
 			i++;
@@ -221,6 +250,8 @@ int CHudMenu :: MsgFunc_ShowMenu( const char *pszName, int iSize, void *pbuf )
 	m_iFlags |= HUD_DRAW;
 
 	m_fWaitingForMore = NeedMore;
+	gEngfuncs.Cvar_SetValue("vr_menu_slots", NeedMore ? 0 : (m_bitsValidSlots & 0x3ff));
+	gEngfuncs.Cvar_SetValue("vr_menu_selection", 0);
 
 	return 1;
 }
@@ -238,7 +269,11 @@ int CHudMenu::MsgFunc_VGUIMenu( const char *pszName, int iSize, void *pbuf )
 
 int CHudMenu::MsgFunc_BuyClose(const char *pszName, int iSize, void *pbuf)
 {
+#ifndef __ANDROID__
+	UserCmd_OldStyleMenuClose();
+#else
 	Touch_CloseMenu();
+#endif
 
 	return 1;
 }
@@ -261,6 +296,8 @@ void CHudMenu::UserCmd_OldStyleMenuOpen()
 
 void CHudMenu::UserCmd_OldStyleMenuClose()
 {
+	gEngfuncs.Cvar_SetValue("vr_menu_slots", 0);
+	gEngfuncs.Cvar_SetValue("vr_menu_selection", 0);
 	m_fMenuDisplayed = 0; // no valid slots means that the menu should be turned off
 	m_iFlags &= ~HUD_DRAW;
 
@@ -272,6 +309,32 @@ void CHudMenu::UserCmd_OldStyleMenuClose()
 
 void CHudMenu::ShowVGUIMenu( int menuType )
 {
+#ifndef __ANDROID__
+	/* Servers can still send VGUIMenu despite the classic-menu preference.
+	 * Resolve the same stock title strings instead of executing touch scripts. */
+	if (menuType==MENU_NUMERICAL_MENU) return;
+	bool ct=g_PlayerExtraInfo[gHUD.m_Scoreboard.m_iPlayerNum].teamnumber==TEAM_CT;
+	const char* title=NULL;
+	switch (menuType) {
+	case MENU_TEAM: title=(m_bitsValidSlots & (1<<5)) ? "#IG_Team_Select_Spect" : (m_bitsValidSlots & (1<<9)) ? "#IG_Team_Select" : "#Team_Select"; break;
+	case MENU_CLASS_T: title="#Terrorist_Select"; break;
+	case MENU_CLASS_CT: title="#CT_Select"; break;
+	case MENU_BUY: title="#Buy"; break;
+	case MENU_BUY_PISTOL: title=ct ? "#CT_BuyPistol" : "#T_BuyPistol"; break;
+	case MENU_BUY_SHOTGUN: title="#BuyShotgun"; break;
+	case MENU_BUY_SUBMACHINEGUN: title=ct ? "#CT_BuySubMachineGun" : "#T_BuySubMachineGun"; break;
+	case MENU_BUY_RIFLE: title=ct ? "#CT_BuyRifle" : "#T_BuyRifle"; break;
+	case MENU_BUY_MACHINEGUN: title="#BuyMachineGun"; break;
+	case MENU_BUY_ITEM: title=ct ? "#CT_BuyItem" : "#T_BuyItem"; break;
+	default: UserCmd_OldStyleMenuClose(); return;
+	}
+	strncpy(g_szMenuString, gHUD.m_TextMessage.BufferedLocaliseTextString(title), MAX_MENU_STRING-1);
+	g_szMenuString[MAX_MENU_STRING-1]=0;
+	m_fMenuDisplayed=1; m_iFlags|=HUD_DRAW; m_flShutoffTime=-1; m_fWaitingForMore=FALSE;
+	gEngfuncs.Cvar_SetValue("vr_menu_slots", m_bitsValidSlots & 0x3ff);
+	gEngfuncs.Cvar_SetValue("vr_menu_selection", 0);
+	return;
+#endif
 	const char *szCmd;
 
 	switch(menuType)
