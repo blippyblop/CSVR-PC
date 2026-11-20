@@ -169,7 +169,12 @@ void VR_Init( void* system, const char* name, int version ) {
 	strcpy(appInfo.engineName, name);
 	appInfo.applicationVersion = version;
 	appInfo.engineVersion = version;
+#ifdef ANDROID
 	appInfo.apiVersion = XR_CURRENT_API_VERSION;
+#else
+	/* Desktop uses 1.0 core plus extensions; newer SDKs must not require 1.1. */
+	appInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
+#endif
 
 	XrInstanceCreateInfo instanceCreateInfo;
 	memset(&instanceCreateInfo, 0, sizeof(instanceCreateInfo));
