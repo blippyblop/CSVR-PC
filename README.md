@@ -32,6 +32,8 @@ The 1.0.6 FWGS HTTP master-server discovery fix is merged without changing game 
 
 All HMD-tested OpenXR/HUD/controller fixes are retained. A preservation check protects 48 XR/UI/port files, per-eye frame handling and eight network protocol/serialization files. See [upstream integration](docs/UPSTREAM_INTEGRATION.md).
 
+PC.2 fixes Windows startup error `-4` (`XR_ERROR_API_VERSION_UNSUPPORTED`) by requesting OpenXR 1.0 core instead of the newer SDK header version. Rendering, HUD and controller code are unchanged.
+
 ## Build
 
 ```sh

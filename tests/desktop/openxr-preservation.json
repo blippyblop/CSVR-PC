@@ -62,5 +62,13 @@
     "3rdparty/xash3d-fwgs/engine/client/cl_parse_48.c": "c18cf0bc748676130109a7aa7b740486ac1ca62aea2568c513f6fbf5d2e57a3d",
     "3rdparty/xash3d-fwgs/engine/client/cl_parse_gs.c": "e574eb76cdf2b940f93b54c676d63c0da4aaf645c71c3853342c9b58e41c0124",
     "3rdparty/xash3d-fwgs/engine/server/sv_client.c": "894e5deb05c7cef09757f24f22ca8dc993edf8939e3df63865906578af42519e"
+  },
+  "reviewed_changes": {
+    "3rdparty/xash3d-fwgs/engine/vr/VrBase.c": {
+      "reason": "PC.2: request OpenXR 1.0 core on desktop so OpenXR 1.0 runtimes can create the instance; Android and all other baseline bytes unchanged",
+      "before": "\tappInfo.apiVersion = XR_CURRENT_API_VERSION;",
+      "after": "#ifdef ANDROID\n\tappInfo.apiVersion = XR_CURRENT_API_VERSION;\n#else\n\t/* Desktop uses 1.0 core plus extensions; newer SDKs must not require 1.1. */\n\tappInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);\n#endif",
+      "sha256": "471466f1ab1c41cbf4e29b9060faf206b1214b137288878ed6b232db3fb37b2b"
+    }
   }
 }

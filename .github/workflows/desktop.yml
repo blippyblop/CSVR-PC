@@ -54,6 +54,8 @@ jobs:
           export WINEDEBUG=-all
           xvfb-run -a wine build-desktop/windows-client/csvr-xr-renderer-test.exe
           xvfb-run -a wine build-desktop/windows-client/csvr-xr-input-test.exe
+          xvfb-run -a wine build-desktop/windows-client/csvr-xr-instance-test.exe 0
+          xvfb-run -a wine build-desktop/windows-client/csvr-xr-instance-test.exe 1
       - name: Stage and package PC build
         run: |
           python3 scripts/desktop/stage.py ${{ matrix.target }}

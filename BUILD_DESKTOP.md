@@ -173,13 +173,16 @@ Internet authentication, full bot integration and sustained gameplay still need
 testing. Native Windows
 OpenXR remains untested.
 
-Three native tests exercise production frame/layer handling, real OpenGL FBOs,
+Five native tests exercise production startup, frame/layer handling, real OpenGL FBOs,
 and controller action polling plus pose serialization through the real engine
 number parser. The frame test covers invalid tracking, nonrendering frames,
 image ownership, resize deferral and teardown. The input test covers physical
 hand mapping, grips/triggers, stick swap, invalid poses, inactive actions and
 focus loss. Frame and input test executables also build for Windows and can run
-under Wine; none of these tests establishes HMD comfort or full gameplay quality.
+under Wine. The instance test also runs on both targets against 1.0-only and 1.1
+mock runtimes, protecting against accidental API version increases from newer SDK
+headers. Desktop requests OpenXR 1.0 core plus runtime-supported extensions.
+None of these tests establishes HMD comfort or full gameplay quality.
 The GL test additionally checks shared HUD landmarks through asymmetric/canted
 views against independent projected coordinates, plus inverse reticle mapping.
 Input tests cover menu repeat timing, held-trigger latching and navigation across
