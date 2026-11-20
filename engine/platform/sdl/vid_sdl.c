@@ -16,6 +16,7 @@ GNU General Public License for more details.
 #include <SDL.h>
 #include "VrBase.h"
 #include "VrRenderer.h"
+#include "VrDesktopGL.h"
 #include "common.h"
 #include "client.h"
 #include "vid_common.h"
@@ -961,11 +962,7 @@ static void GL_SetupAttributes( void )
 	ref.dllFuncs.GL_SetupAttributes( glw_state.safe );
 #ifndef ANDROID
 	if (Sys_CheckParm("-vr") && !Sys_CheckParm("-novr")) {
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
-		SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
-		SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+		VR_DesktopGLAttributes();
 	}
 #endif
 }

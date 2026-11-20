@@ -15,6 +15,7 @@
 #include "VrInput.h"
 #ifndef ANDROID
 #include <SDL.h>
+#include <SDL_opengl.h>
 #endif
 
 #include <stdio.h>
@@ -243,13 +244,30 @@ void VR_Init( void* system, const char* name, int version ) {
 	OXR(xrGetInstanceProcAddr(vr_engine.appState.Instance, "xrGetOpenGLGraphicsRequirementsKHR", (PFN_xrVoidFunction*)&getRequirements));
 	XrGraphicsRequirementsOpenGLKHR requirements = {XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};
 	if (!getRequirements || XR_FAILED(OXR(getRequirements(vr_engine.appState.Instance, systemId, &requirements)))) exit(1);
+	/* SDL returns the requested context version, not the driver's actual version. */
+	typedef const GLubyte* (APIENTRY *GetStringFn)(GLenum);
+	GetStringFn getString = (GetStringFn)SDL_GL_GetProcAddress("glGetString");
+	const char* versionString = getString ? (const char*)getString(GL_VERSION) : NULL;
 	int major = 0, minor = 0;
-	SDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &major);
-	SDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &minor);
-	XrVersion glVersion = XR_MAKE_VERSION(major, minor, 0);
-	if (glVersion < requirements.minApiVersionSupported || glVersion > requirements.maxApiVersionSupported) {
-		ALOGE("The current OpenGL context does not meet the OpenXR runtime requirements.\n"); exit(1);
+	if (!versionString || sscanf(versionString, "%d.%d", &major, &minor) != 2 || major < 1 || minor < 0) {
+		ALOGE("Cannot read the current desktop OpenGL version (GL_VERSION=%s).\n",
+		      versionString ? versionString : "unavailable"); exit(1);
 	}
+	XrVersion glVersion = XR_MAKE_VERSION(major, minor, 0);
+	XrVersion minimum = XR_MAKE_VERSION(XR_VERSION_MAJOR(requirements.minApiVersionSupported),
+	                                  XR_VERSION_MINOR(requirements.minApiVersionSupported), 0);
+	XrVersion testedMaximum = XR_MAKE_VERSION(XR_VERSION_MAJOR(requirements.maxApiVersionSupported),
+	                                        XR_VERSION_MINOR(requirements.maxApiVersionSupported), 0);
+	ALOGV("OpenXR OpenGL: actual %d.%d, runtime minimum %u.%u, tested maximum %u.%u (GL_VERSION=%s).\n",
+	      major, minor, XR_VERSION_MAJOR(minimum), XR_VERSION_MINOR(minimum),
+	      XR_VERSION_MAJOR(testedMaximum), XR_VERSION_MINOR(testedMaximum), versionString);
+	if (glVersion < minimum) {
+		ALOGE("OpenXR needs OpenGL %u.%u or newer; the current context is %d.%d.\n",
+		      XR_VERSION_MAJOR(minimum), XR_VERSION_MINOR(minimum), major, minor); exit(1);
+	}
+	/* OpenXR's tested maximum is advisory; newer compatible GL versions may work. */
+	if (glVersion > testedMaximum)
+		ALOGV("OpenGL is newer than the runtime's tested maximum; continuing with this context.\n");
 #endif
 
 #ifdef ANDROID
