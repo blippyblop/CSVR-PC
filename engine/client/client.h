@@ -712,6 +712,8 @@ void CL_DecayLights( void );
 dlight_t *CL_GetDynamicLight( int number );
 dlight_t *CL_GetEntityLight( int number );
 
+void CL_NotifyServerListResponse( void );
+
 //=================================================
 
 //

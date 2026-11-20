@@ -1822,6 +1822,7 @@ static void CL_InternetServers_f( void )
 	NET_Config( true, true ); // allow remote
 
 	CL_SendMasterServerScanRequest();
+	NET_MasterStaticQuery();
 }
 
 static void CL_QueryServer_f( void )
@@ -2506,11 +2507,16 @@ static void CL_ServerList( netadr_t from, sizebuf_t *msg )
 		Netchan_OutOfBandPrint( NS_CLIENT, servadr, A2A_INFO" %i", PROTOCOL_VERSION );
 	}
 
-	if( cls.internetservers_pending )
-	{
-		UI_ResetPing();
-		cls.internetservers_pending = false;
-	}
+	CL_NotifyServerListResponse();
+}
+
+void CL_NotifyServerListResponse( void )
+{
+	if( !cls.internetservers_pending )
+		return;
+
+	UI_ResetPing();
+	cls.internetservers_pending = false;
 }
 
 /*

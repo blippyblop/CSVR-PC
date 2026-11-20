@@ -15,6 +15,7 @@ GNU General Public License for more details.
 #include "common.h"
 #include "netchan.h"
 #include "server.h"
+#include "client.h"
 
 typedef struct master_s
 {
@@ -29,9 +30,18 @@ typedef struct master_s
 	double last_heartbeat;
 } master_t;
 
+typedef struct masterstatic_s
+{
+	struct masterstatic_s *next;
+	qboolean save;
+	char base[MAX_SYSPATH];
+} masterstatic_t;
+
 static struct masterlist_s
 {
 	master_t *list;
+	masterstatic_t *static_list;
+	int static_in_flight; // counter instead of per-source flag, so clearmasters can't leave a dangling callback pointer
 	qboolean modified;
 } ml;
 
@@ -140,6 +150,131 @@ void NET_MasterClear( void )
 
 	for( m = ml.list; m; m = m->next )
 		m->last_heartbeat = MAX_HEARTBEAT;
+}
+
+/*
+========================
+NET_QueryServerByAddress
+
+========================
+*/
+void NET_QueryServerByAddress( netadr_t adr, connprotocol_t proto )
+{
+	if( proto == PROTO_GOLDSRC )
+		Netchan_OutOfBand( NS_CLIENT, adr, sizeof( A2S_GOLDSRC_INFO ), (const byte *)A2S_GOLDSRC_INFO ); // includes null terminator
+	else
+		Netchan_OutOfBandPrint( NS_CLIENT, adr, A2A_INFO " %i", PROTOCOL_VERSION );
+}
+
+/*
+========================
+NET_ParseMasterStaticBody
+
+Format, one directive per line, '#' and '//' start comments:
+ip <address>   Xash3D server (protocol 49)
+gs <address>   GoldSrc server (protocol 48)
+Lines with unknown directives are skipped for forward compatibility.
+========================
+*/
+static int NET_ParseMasterStaticBody( const byte *body, size_t size )
+{
+	char line[1024];
+	int offset = 0;
+	int count = 0;
+
+	while( COM_MemFgets( (byte *)body, size, &offset, line, sizeof( line )) != NULL )
+	{
+		char token[MAX_TOKEN];
+		char *pfile = line;
+		netadr_t adr = { 0 };
+		qboolean gs;
+
+		pfile = COM_ParseFileSafe( pfile, token, sizeof( token ), PFILE_IGNOREHASHCMT, NULL, NULL );
+		if( !pfile || token[0] == '\0' )
+			continue;
+
+		if( !Q_strcmp( token, "ip" ))
+			gs = false;
+		else if( !Q_strcmp( token, "gs" ))
+			gs = true;
+		else
+			continue;
+
+		pfile = COM_ParseFileSafe( pfile, token, sizeof( token ), PFILE_IGNOREHASHCMT, NULL, NULL );
+		if( !pfile )
+			continue;
+
+		if( !NET_StringToAdr( token, &adr ))
+		{
+			Con_Reportf( S_WARN "masterstatic: can't parse address \"%s\"\n", token );
+			continue;
+		}
+
+		if( adr.port == 0 )
+			adr.port = MSG_BigShort( PORT_SERVER );
+
+		NET_QueryServerByAddress( adr, gs ? PROTO_GOLDSRC : PROTO_CURRENT );
+		count++;
+	}
+
+	return count;
+}
+
+/*
+========================
+NET_MasterStaticResponse
+
+========================
+*/
+static void NET_MasterStaticResponse( const char *url, qboolean success, const byte *data, size_t size, void *userdata )
+{
+	int count;
+
+	if( ml.static_in_flight > 0 )
+		ml.static_in_flight--;
+
+	if( !success || !data || size == 0 )
+	{
+		Con_Reportf( "masterstatic: %s returned no data\n", url );
+		return;
+	}
+
+#if !XASH_DEDICATED
+	// reset ping base before the queries go out, HTTP latency must not count
+	CL_NotifyServerListResponse();
+#endif
+
+	NET_Config( true, false ); // allow remote sends
+
+	count = NET_ParseMasterStaticBody( data, size );
+
+	Con_Reportf( "masterstatic: %s yielded %d server(s)\n", url, count );
+}
+
+/*
+========================
+NET_MasterStaticQuery
+
+Request server lists from all static HTTP masters
+========================
+*/
+void NET_MasterStaticQuery( void )
+{
+	const char *gamedir = GI ? GI->gamefolder : "valve";
+	masterstatic_t *ms;
+
+	if( ml.static_in_flight > 0 )
+		return;
+
+	for( ms = ml.static_list; ms; ms = ms->next )
+	{
+		char url[MAX_SYSPATH + 64];
+
+		Q_snprintf( url, sizeof( url ), "%s/v1/servers/%s", ms->base, gamedir );
+
+		if( HTTP_GetToMemory( url, NET_MasterStaticResponse, NULL ))
+			ml.static_in_flight++;
+	}
 }
 
 /*
@@ -291,6 +426,66 @@ static void NET_AddMaster_f( void )
 
 /*
 ========================
+NET_AddMasterStatic
+
+Add static HTTP master base URL to the list
+========================
+*/
+static masterstatic_t *NET_AddMasterStatic( const char *base )
+{
+	masterstatic_t *ms, *last = NULL;
+	size_t len = Q_strlen( base );
+
+	// strip trailing slashes, the query appends its own
+	while( len > 0 && base[len - 1] == '/' )
+		len--;
+
+	if( len == 0 || len >= sizeof( ms->base ))
+		return NULL;
+
+	for( ms = ml.static_list; ms; ms = ms->next )
+	{
+		if( !Q_strncmp( ms->base, base, len ) && ms->base[len] == '\0' )
+			return ms; // already exists
+
+		last = ms;
+	}
+
+	ms = Mem_Calloc( host.mempool, sizeof( *ms ));
+	Q_strncpy( ms->base, base, len + 1 );
+
+	if( last )
+		last->next = ms;
+	else
+		ml.static_list = ms;
+
+	return ms;
+}
+
+static void NET_AddMasterStatic_f( void )
+{
+	masterstatic_t *ms;
+
+	if( Cmd_Argc() != 2 )
+	{
+		Msg( S_USAGE "addmasterstatic <base url>\n" );
+		return;
+	}
+
+	ms = NET_AddMasterStatic( Cmd_Argv( 1 ));
+
+	if( !ms )
+	{
+		Con_Printf( S_ERROR "invalid static master URL \"%s\"\n", Cmd_Argv( 1 ));
+		return;
+	}
+
+	ms->save = true;
+	ml.modified = true;
+}
+
+/*
+========================
 NET_ClearMasters
 
 Clear master list
@@ -302,6 +497,13 @@ static void NET_ClearMasters_f( void )
 	{
 		master_t *prev = ml.list;
 		ml.list = ml.list->next;
+		Mem_Free( prev );
+	}
+
+	while( ml.static_list )
+	{
+		masterstatic_t *prev = ml.static_list;
+		ml.static_list = ml.static_list->next;
 		Mem_Free( prev );
 	}
 }
@@ -316,6 +518,7 @@ Display current master linked list
 static void NET_ListMasters_f( void )
 {
 	master_t *list;
+	masterstatic_t *ms;
 	int i;
 
 	Con_Printf( "Master servers:\n" );
@@ -327,6 +530,12 @@ static void NET_ListMasters_f( void )
 			Con_Printf( "\t%s\n", NET_AdrToString( list->adr ));
 		else Con_Printf( "\n" );
 	}
+
+	if( ml.static_list )
+		Con_Printf( "Static master base URLs:\n" );
+
+	for( i = 1, ms = ml.static_list; ms; i++, ms = ms->next )
+		Con_Printf( "%d\t%s\n", i, ms->base );
 }
 
 /*
@@ -365,6 +574,16 @@ static void NET_LoadMasters( void )
 			pfile = COM_ParseFile( pfile, token, sizeof( token ) );
 			NET_AddMaster( token, true, true );
 		}
+		else if( !Q_strcmp( token, "masterstatic" ))
+		{
+			pfile = COM_ParseFile( pfile, token, sizeof( token ) );
+			if( pfile )
+			{
+				masterstatic_t *ms = NET_AddMasterStatic( token );
+				if( ms )
+					ms->save = true;
+			}
+		}
 	}
 
 	Mem_Free( afile );
@@ -383,6 +602,7 @@ void NET_SaveMasters( void )
 {
 	file_t *f;
 	master_t *m;
+	masterstatic_t *ms;
 
 	if( !ml.modified )
 		return;
@@ -401,6 +621,12 @@ void NET_SaveMasters( void )
 			FS_Printf( f, "%s %s\n", m->v6only ? "master6" : "master", m->address );
 	}
 
+	for( ms = ml.static_list; ms; ms = ms->next )
+	{
+		if( ms->save )
+			FS_Printf( f, "masterstatic \"%s\"\n", ms->base );
+	}
+
 	FS_Close( f );
 }
 
@@ -414,26 +640,15 @@ Initialize master server list
 void NET_InitMasters( void )
 {
 	Cmd_AddRestrictedCommand( "addmaster", NET_AddMaster_f, "add address to masterserver list" );
+	Cmd_AddRestrictedCommand( "addmasterstatic", NET_AddMasterStatic_f, "add static HTTP masterserver base URL" );
 	Cmd_AddRestrictedCommand( "clearmasters", NET_ClearMasters_f, "clear masterserver list" );
 	Cmd_AddCommand( "listmasters", NET_ListMasters_f, "list masterservers" );
 
 	Cvar_RegisterVariable( &sv_verbose_heartbeats );
 
-	{ // IPv4-only
-		NET_AddMaster( "mentality.rip:27010", false, false );
-		NET_AddMaster( "ms2.mentality.rip:27010", false, false );
-		NET_AddMaster( "ms3.mentality.rip:27010", false, false );
-	}
-
-	{ // IPv6-only
-		NET_AddMaster( "aaaa.mentality.rip:27010", false, true );
-		NET_AddMaster( "aaaa.ms2.mentality.rip:27010", false, true );
-	}
-
-	{ // testing servers, might be offline
-		NET_AddMaster( "mentality.rip:27011", false, false );
-		NET_AddMaster( "aaaa.mentality.rip:27011", false, true );
-	}
+	// upstream FWGS replaced the dead UDP mentality.rip masters with this static list.
+	// do not use fwgs.github.io, the org-wide GitHub Pages URL is xash.su
+	NET_AddMasterStatic( "http://xash.su/server-list" );
 
 	NET_LoadMasters( );
 }

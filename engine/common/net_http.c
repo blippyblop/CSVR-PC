@@ -31,6 +31,7 @@ HTTP downloader
 */
 
 #define MAX_HTTP_BUFFER_SIZE (BIT( 16 ))
+#define MAX_HTTP_MEMORY_SIZE (BIT( 20 ))
 
 typedef struct httpserver_s
 {
@@ -68,6 +69,14 @@ typedef struct httpfile_s
 
 	char query_backup[1024];
 
+	// in-memory response mode (set by HTTP_GetToMemory), path holds the URL
+	qboolean to_memory;
+	httpserver_t *own_server; // not linked into http.first_server
+	byte *mem;
+	size_t mem_size, mem_cap;
+	http_memory_cb_t memcb;
+	void *userdata;
+
 	// query or response
 	char buf[MAX_HTTP_BUFFER_SIZE+1];
 	int header_size, query_length, bytes_sent;
@@ -99,6 +108,7 @@ static int HTTP_FileQueue( httpfile_t *file );
 static int HTTP_FileResolveNS( httpfile_t *file );
 static int HTTP_FileSendRequest( httpfile_t *file );
 static int HTTP_FileDecompress( httpfile_t *file );
+static httpserver_t *HTTP_ParseURL( const char *url );
 
 /*
 ==============
@@ -130,6 +140,17 @@ static void HTTP_FreeFile( httpfile_t *file, qboolean error )
 	}
 
 	file->socket = -1;
+
+	if( file->to_memory )
+	{
+		if( error )
+			Con_Printf( S_ERROR "HTTP: request to %s failed\n", file->path );
+
+		// callback runs in HTTP_AutoClean, so it fires exactly once
+		file->pfn_process = HTTP_FileFree;
+		file->success = !error;
+		return;
+	}
 
 	Q_snprintf( incname, sizeof( incname ), DEFAULT_DOWNLOADED_DIRECTORY "%s.incomplete", file->path );
 
@@ -196,7 +217,7 @@ static int HTTP_FileQueue( httpfile_t *file )
 	Con_Reportf( "HTTP: Starting download %s from %s:%d\n", file->path, file->server->host, file->server->port );
 	Q_snprintf( name, sizeof( name ), DEFAULT_DOWNLOADED_DIRECTORY "%s.incomplete", file->path );
 
-	if( !( file->file = FS_Open( name, "wb+", true )))
+	if( !file->to_memory && !( file->file = FS_Open( name, "wb+", true )))
 	{
 		Con_Printf( S_ERROR "HTTP: cannot open %s!", name );
 		HTTP_FreeFile( file, true );
@@ -330,15 +351,17 @@ static int HTTP_FileConnect( httpfile_t *file )
 	}
 	else Q_strncpy( useragent, http_useragent.string, sizeof( useragent ));
 
+	// memory requests don't support decompression, which works on files only
 	file->query_length = Q_snprintf( file->buf, sizeof( file->buf ),
 		"GET %s%s HTTP/1.1\r\n"
 		"Host: %s:%d\r\n"
 		"User-Agent: %s\r\n"
-		"Accept-Encoding: gzip, deflate\r\n"
+		"%s"
 		"Accept: */*\r\n\r\n",
-		file->server->path, file->path,
+		file->server->path, file->to_memory ? "" : file->path,
 		file->server->host, file->server->port,
-		useragent );
+		useragent,
+		file->to_memory ? "Connection: close\r\n" : "Accept-Encoding: gzip, deflate\r\n" );
 	Q_strncpy( file->query_backup, file->buf, sizeof( file->query_backup ));
 	file->bytes_sent = 0;
 	file->header_size = 0;
@@ -536,6 +559,21 @@ void HTTP_ClearCustomServers( void )
 }
 
 
+static void HTTP_FreeMemoryRequest( httpfile_t *file )
+{
+	if( !file->to_memory )
+		return;
+
+	if( file->mem )
+		Mem_Free( file->mem );
+
+	if( file->own_server )
+		Mem_Free( file->own_server );
+
+	file->mem = NULL;
+	file->own_server = file->server = NULL;
+}
+
 /*
 ===================
 HTTP_AutoClean
@@ -565,6 +603,9 @@ static void HTTP_AutoClean( void )
 			continue;
 		}
 
+		// unlink before callbacks, they may queue new requests
+		*prev = cur->next;
+
 #if !XASH_DEDICATED
 		if( cur->process )
 		{
@@ -578,11 +619,16 @@ static void HTTP_AutoClean( void )
 		else
 #endif
 		{
-			if( cur->success )
+			if( cur->to_memory )
+			{
+				if( cur->memcb )
+					cur->memcb( cur->path, cur->success, cur->mem, cur->mem_size, cur->userdata );
+			}
+			else if( cur->success )
 				Con_Printf( "successfully downloaded %s!\n", cur->path );
 		}
 
-		*prev = cur->next;
+		HTTP_FreeMemoryRequest( cur );
 		Mem_Free( cur );
 	}
 
@@ -594,6 +640,31 @@ static void HTTP_AutoClean( void )
 		Netchan_FragSend( &cls.netchan );
 	}
 #endif
+}
+
+static int HTTP_MemoryWrite( httpfile_t *file, const char *data, int length )
+{
+	if( file->mem_size + length > MAX_HTTP_MEMORY_SIZE )
+		return -1;
+
+	if( file->mem_size + length > file->mem_cap )
+	{
+		size_t newcap = Q_max( file->mem_cap * 2, file->mem_size + length );
+		byte *newmem = Mem_Malloc( host.mempool, newcap );
+
+		if( file->mem )
+		{
+			memcpy( newmem, file->mem, file->mem_size );
+			Mem_Free( file->mem );
+		}
+
+		file->mem = newmem;
+		file->mem_cap = newcap;
+	}
+
+	memcpy( file->mem + file->mem_size, data, length );
+	file->mem_size += length;
+	return length;
 }
 
 static int HTTP_FileSaveReceivedData( httpfile_t *file, int pos, int length )
@@ -655,7 +726,11 @@ static int HTTP_FileSaveReceivedData( httpfile_t *file, int pos, int length )
 			len_to_write = Q_min( length, file->chunksize );
 		else len_to_write = length;
 
-		ret = FS_Write( file->file, &file->buf[pos], len_to_write );
+		if( file->to_memory )
+			ret = HTTP_MemoryWrite( file, &file->buf[pos], len_to_write );
+		else
+			ret = FS_Write( file->file, &file->buf[pos], len_to_write );
+
 		if( ret != len_to_write )
 		{
 			// close it and go to next
@@ -756,7 +831,7 @@ static int HTTP_FileProcessStream( httpfile_t *curfile )
 				{
 					content_encoding += sizeof( "Content-Encoding: " ) - 1;
 
-					if( !Q_strnicmp( content_encoding, "gzip", 4 ) && ( content_encoding[4] == '\0' || content_encoding[4] == '\n' || content_encoding[4] == '\r' ))
+					if( !curfile->to_memory && !Q_strnicmp( content_encoding, "gzip", 4 ) && ( content_encoding[4] == '\0' || content_encoding[4] == '\n' || content_encoding[4] == '\r' ))
 						curfile->compressed = true;
 					else
 					{
@@ -837,10 +912,20 @@ static int HTTP_FileProcessStream( httpfile_t *curfile )
 		}
 	}
 
+	if( curfile->to_memory && curfile->got_response && curfile->size == 0 )
+	{
+		HTTP_FreeFile( curfile, false ); // empty body
+		return 0;
+	}
+
 	if( curfile->size > 0 )
 	{
-		http.progress += (float)curfile->downloaded / curfile->size;
-		http.progress_count++;
+		// background requests must not show the download progress bar
+		if( !curfile->to_memory )
+		{
+			http.progress += (float)curfile->downloaded / curfile->size;
+			http.progress_count++;
+		}
 
 		if( curfile->downloaded >= curfile->size )
 		{
@@ -947,6 +1032,53 @@ void HTTP_AddDownload( const char *path, int size, qboolean process, resource_t 
 
 	httpfile->next = http.first_file;
 	http.first_file = httpfile;
+}
+
+/*
+===================
+HTTP_GetToMemory
+
+Fetch url into memory and pass the body to cb from HTTP_Run.
+cb is called exactly once, also on failure.
+===================
+*/
+qboolean HTTP_GetToMemory( const char *url, http_memory_cb_t cb, void *userdata )
+{
+	httpserver_t *server;
+	httpfile_t *httpfile;
+	size_t urllen = Q_strlen( url );
+	size_t pathlen;
+
+	if( urllen == 0 || urllen >= sizeof( httpfile->path ))
+		return false;
+
+	server = HTTP_ParseURL( url );
+
+	if( !server )
+	{
+		Con_Printf( S_ERROR "\"%s\" is not valid url!\n", url );
+		return false;
+	}
+
+	// HTTP_ParseURL always appends a slash for fastdl prefixes, a resource URL must not get one
+	pathlen = Q_strlen( server->path );
+	if( url[urllen - 1] != '/' && pathlen > 1 )
+		server->path[pathlen - 1] = 0;
+
+	httpfile = Z_Calloc( sizeof( *httpfile ));
+	httpfile->to_memory = true;
+	httpfile->own_server = httpfile->server = server;
+	httpfile->memcb = cb;
+	httpfile->userdata = userdata;
+	httpfile->size = -1;
+	httpfile->socket = -1;
+	Q_strncpy( httpfile->path, url, sizeof( httpfile->path ));
+	httpfile->pfn_process = HTTP_FileQueue;
+
+	httpfile->next = http.first_file;
+	http.first_file = httpfile;
+
+	return true;
 }
 
 /*
@@ -1081,6 +1213,10 @@ static void HTTP_Clear_f( void )
 		if( file->socket != -1 )
 			closesocket( file->socket );
 
+		if( file->to_memory && file->memcb )
+			file->memcb( file->path, false, NULL, 0, file->userdata );
+
+		HTTP_FreeMemoryRequest( file );
 		Mem_Free( file );
 	}
 }

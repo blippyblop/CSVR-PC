@@ -906,6 +906,8 @@ void NET_MasterHeartbeat( void );
 void NET_MasterClear( void );
 void NET_MasterShutdown( void );
 qboolean NET_GetMaster( netadr_t from, uint *challenge, double *last_heartbeat );
+void NET_MasterStaticQuery( void );
+void NET_QueryServerByAddress( netadr_t adr, connprotocol_t proto );
 
 //
 // munge.c
