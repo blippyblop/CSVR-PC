@@ -34,6 +34,8 @@ All HMD-tested OpenXR/HUD/controller fixes are retained. A preservation check pr
 
 PC.2 fixes Windows startup error `-4` (`XR_ERROR_API_VERSION_UNSUPPORTED`) by requesting OpenXR 1.0 core instead of the newer SDK header version. Rendering, HUD and controller code are unchanged.
 
+PC.3 fixes the subsequent OpenGL requirements check: it reads the driver's actual version, treats OpenXR's tested maximum as advisory, and requests a 4.5 compatibility context for Windows XR. Diagnostics show actual and runtime-required versions. Linux's context request remains 3.3; the confirmed Linux PC.1 binary remains available in its release.
+
 ## Build
 
 ```sh

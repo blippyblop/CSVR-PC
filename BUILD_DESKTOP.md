@@ -173,7 +173,7 @@ Internet authentication, full bot integration and sustained gameplay still need
 testing. Native Windows
 OpenXR remains untested.
 
-Five native tests exercise production startup, frame/layer handling, real OpenGL FBOs,
+Six native tests exercise production startup, frame/layer handling, real OpenGL FBOs,
 and controller action polling plus pose serialization through the real engine
 number parser. The frame test covers invalid tracking, nonrendering frames,
 image ownership, resize deferral and teardown. The input test covers physical
@@ -182,6 +182,13 @@ focus loss. Frame and input test executables also build for Windows and can run
 under Wine. The instance test also runs on both targets against 1.0-only and 1.1
 mock runtimes, protecting against accidental API version increases from newer SDK
 headers. Desktop requests OpenXR 1.0 core plus runtime-supported extensions.
+Windows XR requests an OpenGL 4.5 compatibility context; Linux keeps its 3.3
+compatibility request. Startup validates the actual driver `GL_VERSION` against
+the runtime minimum and logs the advisory tested maximum. The negative startup
+fixture verifies rejection of insufficient/malformed/unavailable GL versions;
+both actual GL 4.5 and 4.6 pass against a 4.5-minimum/tested-maximum runtime.
+A Windows-only context executable additionally creates a real compatibility
+context and verifies fixed-function triangle pixel readback under Wine in CI.
 None of these tests establishes HMD comfort or full gameplay quality.
 The GL test additionally checks shared HUD landmarks through asymmetric/canted
 views against independent projected coordinates, plus inverse reticle mapping.

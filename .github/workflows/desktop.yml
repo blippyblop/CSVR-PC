@@ -56,10 +56,18 @@ jobs:
           xvfb-run -a wine build-desktop/windows-client/csvr-xr-input-test.exe
           xvfb-run -a wine build-desktop/windows-client/csvr-xr-instance-test.exe 0
           xvfb-run -a wine build-desktop/windows-client/csvr-xr-instance-test.exe 1
+          python3 tests/desktop/check_instance_failures.py --wine build-desktop/windows-client/csvr-xr-instance-test.exe
       - name: Stage and package PC build
         run: |
           python3 scripts/desktop/stage.py ${{ matrix.target }}
           python3 scripts/desktop/package.py --target ${{ matrix.target }}
+      - name: Run Windows compatibility-context draw test
+        if: matrix.target == 'windows'
+        run: |
+          export WINEDEBUG=-all
+          export LIBGL_ALWAYS_SOFTWARE=1
+          export WINEPATH="$(winepath -w "$PWD/stage-desktop/windows-x86_64")"
+          xvfb-run -a wine build-desktop/windows-client/csvr-xr-context-test.exe
       - uses: actions/upload-artifact@v4
         with:
           name: CSVR-PC-${{ matrix.target }}-x86_64

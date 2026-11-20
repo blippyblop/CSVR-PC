@@ -65,10 +65,39 @@
   },
   "reviewed_changes": {
     "3rdparty/xash3d-fwgs/engine/vr/VrBase.c": {
-      "reason": "PC.2: request OpenXR 1.0 core on desktop so OpenXR 1.0 runtimes can create the instance; Android and all other baseline bytes unchanged",
-      "before": "\tappInfo.apiVersion = XR_CURRENT_API_VERSION;",
-      "after": "#ifdef ANDROID\n\tappInfo.apiVersion = XR_CURRENT_API_VERSION;\n#else\n\t/* Desktop uses 1.0 core plus extensions; newer SDKs must not require 1.1. */\n\tappInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);\n#endif",
-      "sha256": "471466f1ab1c41cbf4e29b9060faf206b1214b137288878ed6b232db3fb37b2b"
+      "reason": "PC.2 OpenXR 1.0 API request; PC.3 actual driver GL version, patch-agnostic minimum and advisory tested maximum, with diagnostics",
+      "sha256": "390cf1ea7072fd0bfcacaf061d6ccf568646f4545790978194d7dff9b9f626e7",
+      "replacements": [
+        {
+          "before": "#include \"VrInput.h\"\n#ifndef ANDROID\n#include <SDL.h>\n#endif\n\n#include <stdio.h>\n",
+          "after": "#include \"VrInput.h\"\n#ifndef ANDROID\n#include <SDL.h>\n#include <SDL_opengl.h>\n#endif\n\n#include <stdio.h>\n"
+        },
+        {
+          "before": "\tstrcpy(appInfo.engineName, name);\n\tappInfo.applicationVersion = version;\n\tappInfo.engineVersion = version;\n\tappInfo.apiVersion = XR_CURRENT_API_VERSION;\n\n\tXrInstanceCreateInfo instanceCreateInfo;\n\tmemset(&instanceCreateInfo, 0, sizeof(instanceCreateInfo));\n",
+          "after": "\tstrcpy(appInfo.engineName, name);\n\tappInfo.applicationVersion = version;\n\tappInfo.engineVersion = version;\n#ifdef ANDROID\n\tappInfo.apiVersion = XR_CURRENT_API_VERSION;\n#else\n\t/* Desktop uses 1.0 core plus extensions; newer SDKs must not require 1.1. */\n\tappInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);\n#endif\n\n\tXrInstanceCreateInfo instanceCreateInfo;\n\tmemset(&instanceCreateInfo, 0, sizeof(instanceCreateInfo));\n"
+        },
+        {
+          "before": "\tOXR(xrGetInstanceProcAddr(vr_engine.appState.Instance, \"xrGetOpenGLGraphicsRequirementsKHR\", (PFN_xrVoidFunction*)&getRequirements));\n\tXrGraphicsRequirementsOpenGLKHR requirements = {XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};\n\tif (!getRequirements || XR_FAILED(OXR(getRequirements(vr_engine.appState.Instance, systemId, &requirements)))) exit(1);\n\tint major = 0, minor = 0;\n\tSDL_GL_GetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, &major);\n\tSDL_GL_GetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, &minor);\n\tXrVersion glVersion = XR_MAKE_VERSION(major, minor, 0);\n\tif (glVersion < requirements.minApiVersionSupported || glVersion > requirements.maxApiVersionSupported) {\n\t\tALOGE(\"The current OpenGL context does not meet the OpenXR runtime requirements.\\n\"); exit(1);\n\t}\n#endif\n\n#ifdef ANDROID\n",
+          "after": "\tOXR(xrGetInstanceProcAddr(vr_engine.appState.Instance, \"xrGetOpenGLGraphicsRequirementsKHR\", (PFN_xrVoidFunction*)&getRequirements));\n\tXrGraphicsRequirementsOpenGLKHR requirements = {XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR};\n\tif (!getRequirements || XR_FAILED(OXR(getRequirements(vr_engine.appState.Instance, systemId, &requirements)))) exit(1);\n\t/* SDL returns the requested context version, not the driver's actual version. */\n\ttypedef const GLubyte* (APIENTRY *GetStringFn)(GLenum);\n\tGetStringFn getString = (GetStringFn)SDL_GL_GetProcAddress(\"glGetString\");\n\tconst char* versionString = getString ? (const char*)getString(GL_VERSION) : NULL;\n\tint major = 0, minor = 0;\n\tif (!versionString || sscanf(versionString, \"%d.%d\", &major, &minor) != 2 || major < 1 || minor < 0) {\n\t\tALOGE(\"Cannot read the current desktop OpenGL version (GL_VERSION=%s).\\n\",\n\t\t      versionString ? versionString : \"unavailable\"); exit(1);\n\t}\n\tXrVersion glVersion = XR_MAKE_VERSION(major, minor, 0);\n\tXrVersion minimum = XR_MAKE_VERSION(XR_VERSION_MAJOR(requirements.minApiVersionSupported),\n\t                                  XR_VERSION_MINOR(requirements.minApiVersionSupported), 0);\n\tXrVersion testedMaximum = XR_MAKE_VERSION(XR_VERSION_MAJOR(requirements.maxApiVersionSupported),\n\t                                        XR_VERSION_MINOR(requirements.maxApiVersionSupported), 0);\n\tALOGV(\"OpenXR OpenGL: actual %d.%d, runtime minimum %u.%u, tested maximum %u.%u (GL_VERSION=%s).\\n\",\n\t      major, minor, XR_VERSION_MAJOR(minimum), XR_VERSION_MINOR(minimum),\n\t      XR_VERSION_MAJOR(testedMaximum), XR_VERSION_MINOR(testedMaximum), versionString);\n\tif (glVersion < minimum) {\n\t\tALOGE(\"OpenXR needs OpenGL %u.%u or newer; the current context is %d.%d.\\n\",\n\t\t      XR_VERSION_MAJOR(minimum), XR_VERSION_MINOR(minimum), major, minor); exit(1);\n\t}\n\t/* OpenXR's tested maximum is advisory; newer compatible GL versions may work. */\n\tif (glVersion > testedMaximum)\n\t\tALOGV(\"OpenGL is newer than the runtime's tested maximum; continuing with this context.\\n\");\n#endif\n\n#ifdef ANDROID\n"
+        }
+      ]
+    },
+    "3rdparty/xash3d-fwgs/engine/platform/sdl/vid_sdl.c": {
+      "reason": "PC.3 Windows XR requests GL 4.5 compatibility; Linux retains its existing 3.3 compatibility attributes",
+      "sha256": "38b47232ebbcbbb4a25a3ae5f159f52f841797c6cf6b98d46321893c7dc30a23",
+      "replacements": [
+        {
+          "before": "#include <SDL.h>\n#include \"VrBase.h\"\n#include \"VrRenderer.h\"\n#include \"common.h\"\n#include \"client.h\"\n#include \"vid_common.h\"\n",
+          "after": "#include <SDL.h>\n#include \"VrBase.h\"\n#include \"VrRenderer.h\"\n#include \"VrDesktopGL.h\"\n#include \"common.h\"\n#include \"client.h\"\n#include \"vid_common.h\"\n"
+        },
+        {
+          "before": "\tref.dllFuncs.GL_SetupAttributes( glw_state.safe );\n#ifndef ANDROID\n\tif (Sys_CheckParm(\"-vr\") && !Sys_CheckParm(\"-novr\")) {\n\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);\n\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);\n\t\tSDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);\n\t\tSDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);\n\t\tSDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);\n\t}\n#endif\n}\n",
+          "after": "\tref.dllFuncs.GL_SetupAttributes( glw_state.safe );\n#ifndef ANDROID\n\tif (Sys_CheckParm(\"-vr\") && !Sys_CheckParm(\"-novr\")) {\n\t\tVR_DesktopGLAttributes();\n\t}\n#endif\n}\n"
+        }
+      ]
     }
+  },
+  "startup_files": {
+    "3rdparty/xash3d-fwgs/engine/vr/VrDesktopGL.h": "44b545562d80ae53253e2d4ac16567ed14aa4ef858e839f7bf60d61b9b3d7286"
   }
 }
