@@ -1,16 +1,28 @@
 # Desktop OpenXR port — experimental
 
-This checkout ports the Team Beef CSVR 1.0.5 source baseline to x86-64 Linux and
+This checkout ports the Team Beef CSVR 1.0.6 source baseline to x86-64 Linux and
 Windows using desktop OpenGL and OpenXR. The client, engine, renderer, filesystem,
 bitmap-font menu, ReGameDLL server and YaPB library build in Release mode for
-both targets. This is an initial port, not a verified playable release.
+both targets. This is an experimental PC release with the HMD-tested desktop
+fixes preserved; see [upstream integration](docs/UPSTREAM_INTEGRATION.md).
 
 ## Build and stage
 
-Linux prerequisites: Clang, Python 3, CMake, Ninja, pkg-config, SDL2 development
+Linux prerequisites: Clang, Python 3, CMake, Ninja, pkg-config, SDL2 >=2.24 development
 files, OpenGL/EGL development files, OpenXR loader development files and zlib.
 
+The release is built as a regular user in an Ubuntu 22.04 container. For systems
+with older SDL headers, first build the pinned dependency:
+
 ```sh
+export CSVR_LINUX_SDK="$PWD/build-desktop/linux-sdk"
+./scripts/desktop/build-linux-sdk.sh
+export PKG_CONFIG_PATH="$CSVR_LINUX_SDK/lib/pkgconfig"
+export LD_LIBRARY_PATH="$CSVR_LINUX_SDK/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+```sh
+python3 scripts/desktop/check-openxr-preservation.py
 ./scripts/desktop/build-engine.sh linux
 ./scripts/desktop/build-game.sh linux
 ctest --test-dir build-desktop/linux-client --output-on-failure
@@ -19,6 +31,12 @@ python3 scripts/desktop/stage.py linux
 
 Windows cross-build prerequisites: LLVM-MinGW and a compatible SDK prefix
 containing SDL2 and OpenXR headers, import libraries and runtime DLLs.
+The exact release dependencies can be fetched with checksum verification:
+
+```sh
+python3 scripts/desktop/fetch-windows-deps.py
+source build-desktop/windows-deps/env.sh
+```
 
 ```sh
 export CSVR_LLVM_MINGW=/path/to/llvm-mingw
@@ -35,6 +53,13 @@ staged under `stage-desktop/{linux,windows}-x86_64`. Nothing installs system fil
 configs/screenshots in an existing staging directory are preserved and excluded.
 Distribute the files in this manifest, not the entire used staging directory.
 
+`CSVR_BUILD_ROOT` selects an alternate build directory. Linux PC CI bundles the
+pinned SDL library; Windows CI uses the pinned LLVM-MinGW/SDK lock. The old
+Android/signing workflow is replaced with PC-only build, test and artifact jobs.
+Package with `python3 scripts/desktop/package.py --target linux` (or `windows`).
+After committing, `--source` packages all recursively tracked source; ignored
+game data, test configs and authentication files cannot enter the source asset.
+
 ## Run
 
 Provide owned Counter-Strike 1.6 `valve/` and `cstrike/` directories. Keep them in
@@ -47,9 +72,10 @@ through the normal loader configuration or `XR_RUNTIME_JSON`.
 The owned Steam installation used locally is ignored under `game-data/SteamCS16`.
 It was obtained with the official SteamRE DepotDownloader and QR authentication;
 no Steam credentials or proprietary game files belong in distribution artifacts.
-Acquired baseline sources/APKs and provenance are stored separately in
-`../artifacts/csvr-openxr-20261117/`. The beta APK has different native libraries;
-this port does not claim to match its unpublished source revision.
+The release provides complete recursive source and per-file provenance.
+Upstream pins and compatibility evidence are described in
+`docs/UPSTREAM_INTEGRATION.md`. This fork does not claim to match an unpublished
+beta APK source revision.
 
 For a paused de_dust2 scene with live head tracking and gameplay input suppressed
 after pausing, run `./scripts/desktop/run-static.sh`. Set `CSVR_GAME_DATA` if the
@@ -138,8 +164,10 @@ The user has confirmed world fusion/head tracking, basic gameplay controls, HUD
 fusion, main/team menu navigation, and the separate left-stick command menu.
 The latter also passed scripted root-to-submenu activation, focus/column/toggle
 navigation and close tests; its controller navigation was then confirmed in HMD.
-Motion weapon calibration, multiplayer,
-bot integration and sustained performance still need HMD testing. Native Windows
+The 1.0.6 update additionally passes bidirectional old/new client-server signon
+and cross-platform Windows/Linux LAN team-join tests. Motion weapon calibration,
+Internet authentication, full bot integration and sustained gameplay still need
+testing. Native Windows
 OpenXR remains untested.
 
 Three native tests exercise production frame/layer handling, real OpenGL FBOs,

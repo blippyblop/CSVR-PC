@@ -15,8 +15,9 @@ parser.add_argument('target', choices=['linux', 'windows'])
 args = parser.parse_args()
 project = Path(__file__).resolve().parents[2]
 target = args.target
-engine = project / 'build-desktop' / (target + '-engine')
-game = project / 'build-desktop' / (target + '-client')
+build_root = Path(os.environ.get('CSVR_BUILD_ROOT', str(project / 'build-desktop')))
+engine = build_root / (target + '-engine')
+game = build_root / (target + '-client')
 stage = project / 'stage-desktop' / (target + '-x86_64')
 stage.mkdir(parents=True, exist_ok=True)
 managed = set()
@@ -53,12 +54,22 @@ copy(game / '3rdparty/yapb' / f'yapb_amd64.{suffix}', f'cstrike/dlls/yapb_amd64.
 copy(game / 'extras.pk3', 'cstrike/extras.pk3')
 copy(engine / '3rdparty/extras/extras.pk3', 'valve/extras.pk3')
 copy(project / 'LICENSE', 'LICENSE-CSVR.txt')
+copy(project / 'VERSION', 'VERSION')
+copy(project / 'THIRD_PARTY_NOTICES.md', 'THIRD_PARTY_NOTICES.md')
 
 if target == 'windows':
     sdk = Path(os.environ['CSVR_WINDOWS_SDK'])
     compiler = Path(os.environ['CSVR_LLVM_MINGW'])
     copy(sdk / 'bin/SDL2.dll', 'SDL2.dll')
     copy(sdk / 'bin/libopenxr_loader.dll', 'libopenxr_loader.dll')
+    for component in ['SDL2', 'openxr-sdk', 'libgcc', 'libstdc++', 'libwinpthread']:
+        directory = sdk / 'share/licenses' / component
+        if not directory.is_dir():
+            raise SystemExit(f'Missing runtime license directory: {directory}')
+        for source in sorted(directory.rglob('*')):
+            if source.is_file():
+                copy(source, str(Path('licenses') / component / source.relative_to(directory)))
+    copy(compiler / 'LICENSE.TXT', 'licenses/LLVM-MinGW-LICENSE.TXT')
     # Resolve third-party dependencies recursively. System DLLs remain provided
     # by Windows. Match case-insensitively, as the Windows loader does.
     available = {}
@@ -82,6 +93,10 @@ if target == 'windows':
     (stage / 'csvr-desktop.bat').write_text('@echo off\ncd /d "%~dp0"\nxash3d.exe -game cstrike -ref gl -windowed -novr %*\n', newline='\r\n')
     managed.update(['csvr-xr.bat', 'csvr-desktop.bat'])
 else:
+    if os.environ.get('CSVR_LINUX_SDK'):
+        sdk = Path(os.environ['CSVR_LINUX_SDK'])
+        copy(sdk / 'lib/libSDL2-2.0.so.0', 'libSDL2-2.0.so.0')
+        copy(project / '3rdparty/SDL/LICENSE.txt', 'licenses/SDL2-LICENSE.txt')
     for name, mode in [('csvr-xr', '-vr'), ('csvr-desktop', '-novr')]:
         script = stage / name
         script.write_text('#!/usr/bin/env bash\nset -euo pipefail\ncd -- "$(dirname -- "${BASH_SOURCE[0]}")"\n'
@@ -91,7 +106,7 @@ else:
         script.chmod(0o755)
         managed.add(name)
 
-(stage / 'README.txt').write_text('CSVR-XR initial desktop OpenXR port.\n'
+(stage / 'README.txt').write_text('CSVR-PC ' + (project / 'VERSION').read_text().strip() + ' — experimental desktop OpenXR fork.\n'
     'Provide your owned Counter-Strike 1.6 valve/ and cstrike/ game folders.\n'
     'You can keep them read-only and pass -rodir /path/to/game-root to a launcher.\n'
     'Linux defaults to Wayland. Explicit X11/GLX fallback: SDL_VIDEODRIVER=x11 SDL_VIDEO_X11_FORCE_EGL=0 ./csvr-xr\n'
@@ -100,7 +115,8 @@ else:
     'World stereo/head tracking and basic gameplay controls were confirmed in HMD.\n'
     'HUD now uses a shared stereo plane; menus use stick navigation and trigger\n'
     'confirmation; both were confirmed working in HMD. Native Windows XR is untested.\n'
-    'The YaPB library is included; bot integration and multiplayer need gameplay testing.\n'
+    'LAN signon/team join is checked across versions/platforms; Internet authentication is not certified.\n'
+    'The YaPB library is included; full bot integration needs gameplay testing.\n'
     'See BUILD_DESKTOP.md in the source checkout for build and validation details.\n')
 managed.add('README.txt')
 copy(project / 'BUILD_DESKTOP.md', 'BUILD_DESKTOP.md')

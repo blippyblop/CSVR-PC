@@ -1,0 +1,64 @@
+name: PC OpenXR builds
+on:
+  push:
+    branches: ['pc/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux, windows]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libsdl2-dev libegl1-mesa-dev libgl1-mesa-dev libopenxr-dev zlib1g-dev xz-utils zstd binutils
+      - name: Verify HMD-tested OpenXR fixes
+        run: python3 scripts/desktop/check-openxr-preservation.py
+      - name: Prepare Linux SDL
+        if: matrix.target == 'linux'
+        run: |
+          export CSVR_LINUX_SDK="$PWD/build-desktop/linux-sdk"
+          ./scripts/desktop/build-linux-sdk.sh
+          echo "CSVR_LINUX_SDK=$CSVR_LINUX_SDK" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$CSVR_LINUX_SDK/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$CSVR_LINUX_SDK/lib" >> "$GITHUB_ENV"
+      - name: Prepare Windows dependencies
+        if: matrix.target == 'windows'
+        run: |
+          python3 scripts/desktop/fetch-windows-deps.py
+          source build-desktop/windows-deps/env.sh
+          echo "CSVR_LLVM_MINGW=$CSVR_LLVM_MINGW" >> "$GITHUB_ENV"
+          echo "CSVR_WINDOWS_SDK=$CSVR_WINDOWS_SDK" >> "$GITHUB_ENV"
+      - name: Build engine and game
+        run: |
+          ./scripts/desktop/build-engine.sh ${{ matrix.target }}
+          ./scripts/desktop/build-game.sh ${{ matrix.target }}
+      - name: Run native XR tests
+        if: matrix.target == 'linux'
+        run: ctest --test-dir build-desktop/linux-client --output-on-failure
+      - name: Run Windows XR tests through Wine
+        if: matrix.target == 'windows'
+        run: |
+          sudo apt-get install -y wine64 xvfb
+          export WINEDEBUG=-all
+          xvfb-run -a wine build-desktop/windows-client/csvr-xr-renderer-test.exe
+          xvfb-run -a wine build-desktop/windows-client/csvr-xr-input-test.exe
+      - name: Stage and package PC build
+        run: |
+          python3 scripts/desktop/stage.py ${{ matrix.target }}
+          python3 scripts/desktop/package.py --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CSVR-PC-${{ matrix.target }}-x86_64
+          path: build-desktop/releases/*

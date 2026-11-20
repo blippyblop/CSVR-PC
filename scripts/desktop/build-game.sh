@@ -2,7 +2,8 @@
 set -euo pipefail
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 target=${1:-linux}
-args=(-S "$project_dir" -B "$project_dir/build-desktop/$target-client" -G Ninja
+build_root=${CSVR_BUILD_ROOT:-"$project_dir/build-desktop"}
+args=(-S "$project_dir" -B "$build_root/$target-client" -G Ninja
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
       -DBUILD_CLIENT=ON -DBUILD_MAINUI=ON -DBUILD_SERVER=ON
       -DMAINUI_USE_CUSTOM_FONT_RENDER=OFF -DBUILD_DESKTOP_XR_TESTS=ON)
@@ -13,4 +14,4 @@ case "$target" in
   *) echo "Usage: $0 linux|windows" >&2; exit 2 ;;
 esac
 cmake "${args[@]}"
-cmake --build "$project_dir/build-desktop/$target-client" --parallel "${CSVR_BUILD_JOBS:-8}"
+cmake --build "$build_root/$target-client" --parallel "${CSVR_BUILD_JOBS:-8}"

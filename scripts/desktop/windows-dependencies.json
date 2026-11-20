@@ -1,0 +1,45 @@
+{
+  "toolchain": {
+    "name": "llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64",
+    "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261104/llvm-mingw-20261104-ucrt-ubuntu-22.04-x86_64.tar.xz",
+    "sha256": "919380403de87dca3c581c2053230cd298af5e891286628ba0613b7fed370926"
+  },
+  "sdk": [
+    {
+      "name": "mingw-w64-x86_64-SDL2",
+      "version": "2.32.10-1",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-SDL2-2.32.10-1-any.pkg.tar.zst",
+      "sha256": "5991afbcfeb2f8b838ab80b2270d713a727199ca392715677a7c1931a0d9ecef"
+    },
+    {
+      "name": "mingw-w64-x86_64-cc-libs",
+      "version": "16.2.0-6",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-cc-libs-16.2.0-6-any.pkg.tar.zst",
+      "sha256": "0128c6f7fc227e5862351e970e52d42370c72c896db87b8413c2699c6337a13a"
+    },
+    {
+      "name": "mingw-w64-x86_64-libgcc",
+      "version": "16.2.0-6",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libgcc-16.2.0-6-any.pkg.tar.zst",
+      "sha256": "e0815432c4225892b0eef57055fe507fa0b9a036436f046605f6629696bd1b88"
+    },
+    {
+      "name": "mingw-w64-x86_64-libstdc++",
+      "version": "16.2.0-6",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libstdc++-16.2.0-6-any.pkg.tar.zst",
+      "sha256": "924b47e8c3e20b6448e29d3333acc638a4f4783c1c45230e09673532f9c4f198"
+    },
+    {
+      "name": "mingw-w64-x86_64-libwinpthread",
+      "version": "14.0.0.r569.g34eeafb7d-1",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-14.0.0.r569.g34eeafb7d-1-any.pkg.tar.zst",
+      "sha256": "7774d48f1b2727f54c8148e5994a4a8e464dfa2dd5a177e630ebfd522dcbe2c0"
+    },
+    {
+      "name": "mingw-w64-x86_64-openxr-sdk",
+      "version": "1.1.62-1",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-openxr-sdk-1.1.62-1-any.pkg.tar.zst",
+      "sha256": "b8d663a27dc91ad5fd5918e0f8acdd3509d63aab2bd26389328c66ffeaabad7b"
+    }
+  ]
+}

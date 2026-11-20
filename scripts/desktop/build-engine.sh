@@ -3,7 +3,8 @@ set -euo pipefail
 project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)
 target=${1:-linux}
 shift || true
-build_dir="$project_dir/build-desktop/$target-engine"
+build_root=${CSVR_BUILD_ROOT:-"$project_dir/build-desktop"}
+build_dir="$build_root/$target-engine"
 cd "$project_dir/3rdparty/xash3d-fwgs"
 case "$target" in
   linux)
