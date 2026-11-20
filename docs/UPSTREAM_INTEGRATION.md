@@ -87,6 +87,10 @@ and `deps/ReGameDLL_CS` in this same separate GitHub fork. Their upstream histor
 and local port commits are preserved, without additional forks or local-only
 gitlinks. Other dependency submodules retain upstream URLs.
 
+PC.3 uses Xiph's official GitHub mirrors for Ogg, Vorbis and opusfile after the
+GitLab Ogg endpoint returned HTTP 502 during checkout. Their exact pinned commit
+IDs are unchanged and were verified to exist on those mirrors.
+
 Release assets include manifest-verified Linux/Windows builds, complete recursive
 source, provenance, SHA-256 checksums and validation summaries. Owned game data
 and authentication material are excluded.
