@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "common.h"
+#include "utflib.h"
 
 #if XASH_LIB == LIB_WIN32
 #include "lib_win.h"

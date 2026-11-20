@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "common.h"
+#include <VrBase.h>
 #include "client.h"
 #include "const.h"
 #include "triangleapi.h"
@@ -296,7 +297,11 @@ void SPR_AdjustSize( float *x, float *y, float *w, float *h )
 
 	// In VR mode the graphics needs to be scaled down on the center to be visible
 	bool isNotFullscreen = (*x > 0) || (*y > 0) || (*w < clgame.scrInfo.iWidth) || (*h < clgame.scrInfo.iHeight);
-	if ((Cvar_VariableValue("vr_gamemode") > 0) && isNotFullscreen)
+	if ((Cvar_VariableValue("vr_gamemode") > 0) && isNotFullscreen
+#ifndef ANDROID
+		&& !VR_IsEnabled()
+#endif
+		)
 	{
 		float scale = 0.25f;
 		float offset = (1 - scale) / 2.0f;
@@ -2935,7 +2940,10 @@ static void GAME_EXPORT pfnGetMousePos( struct tagPOINT *ppt )
 	if( !ppt )
 		return;
 
-	Platform_GetMousePos( &ppt->x, &ppt->y );
+	int x, y;
+	Platform_GetMousePos(&x, &y);
+	ppt->x = x;
+	ppt->y = y;
 }
 
 /*

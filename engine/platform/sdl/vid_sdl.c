@@ -14,6 +14,8 @@ GNU General Public License for more details.
 */
 #if !XASH_DEDICATED
 #include <SDL.h>
+#include "VrBase.h"
+#include "VrRenderer.h"
 #include "common.h"
 #include "client.h"
 #include "vid_common.h"
@@ -487,6 +489,7 @@ GL_UpdateSwapInterval
 */
 void GL_UpdateSwapInterval( void )
 {
+	if (VR_IsEnabled()) return;
 #if SDL_VERSION_ATLEAST( 2, 0, 0 )
 	// disable VSync while level is loading
 	if( cls.state < ca_active )
@@ -517,6 +520,7 @@ qboolean GL_DeleteContext( void )
 #if SDL_VERSION_ATLEAST( 2, 0, 0 )
 	if( glw_state.context )
 	{
+		VR_Destroy(VR_GetEngine());
 		SDL_GL_DeleteContext(glw_state.context);
 		glw_state.context = NULL;
 	}
@@ -538,6 +542,13 @@ static qboolean GL_CreateContext( void )
 		return GL_DeleteContext();
 	}
 #endif // SDL_VERSION_ATLEAST( 2, 0, 0 )
+#ifndef ANDROID
+	if (Sys_CheckParm("-vr") && !Sys_CheckParm("-novr")) {
+		VR_Init(NULL, "CSVR-XR", 1);
+		VR_SetConfigFloat(VR_CONFIG_CANVAS_ASPECT, 4.0f / 3.0f);
+		SDL_GL_SetSwapInterval(0);
+	}
+#endif
 	return true;
 }
 
@@ -948,10 +959,20 @@ static void GL_SetupAttributes( void )
 #endif // SDL_VERSION_ATLEAST( 2, 0, 0 )
 
 	ref.dllFuncs.GL_SetupAttributes( glw_state.safe );
+#ifndef ANDROID
+	if (Sys_CheckParm("-vr") && !Sys_CheckParm("-novr")) {
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+		SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_COMPATIBILITY);
+		SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 0);
+		SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 0);
+	}
+#endif
 }
 
 void GL_SwapBuffers( void )
 {
+	if (VR_IsEnabled()) return;
 #if SDL_VERSION_ATLEAST( 2, 0, 0 )
 	SDL_GL_SwapWindow( host.hWnd );
 #else // SDL_VERSION_ATLEAST( 2, 0, 0 )

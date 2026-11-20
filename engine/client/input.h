@@ -61,6 +61,8 @@ typedef enum
 extern convar_t touch_enable;
 
 void Touch_Draw( void );
+qboolean Touch_MenuActive( void );
+void Touch_MenuInput( unsigned events );
 void Touch_SetClientOnly( byte state );
 void Touch_RemoveButton( const char *name, qboolean privileged );
 void Touch_HideButtons( const char *name, unsigned char hide, qboolean privileged );

@@ -99,7 +99,7 @@ SUBDIRS = [
 	Subproject('3rdparty/libogg',       lambda x: x.env.CLIENT and not x.env.HAVE_SYSTEM_OGG),
 	Subproject('3rdparty/vorbis',       lambda x: x.env.CLIENT and (not x.env.HAVE_SYSTEM_VORBIS or not x.env.HAVE_SYSTEM_VORBISFILE)),
 	Subproject('3rdparty/opusfile',     lambda x: x.env.CLIENT and not x.env.HAVE_SYSTEM_OPUSFILE),
-	Subproject('3rdparty/mainui',       lambda x: x.env.CLIENT),
+	Subproject('3rdparty/mainui',       lambda x: x.env.CLIENT and not x.env.DISABLE_ENGINE_MAINUI),
 	Subproject('3rdparty/vgui_support', lambda x: x.env.CLIENT),
 	Subproject('3rdparty/MultiEmulator',lambda x: x.env.CLIENT),
 #	Subproject('3rdparty/freevgui',     lambda x: x.env.CLIENT),
@@ -130,6 +130,9 @@ def options(opt):
 	opt.load('reconfigure compiler_optimizations xshlib xcompile compiler_cxx compiler_c sdl2 clang_compilation_database strip_on_install waf_unit_test msdev msvs subproject cmake')
 
 	grp = opt.add_option_group('Common options')
+
+	grp.add_option('--disable-engine-mainui', action='store_true', dest='DISABLE_ENGINE_MAINUI', default=False,
+		help='use the game-provided menu library instead of building the bundled FWGS menu')
 
 	grp.add_option('-d', '--dedicated', action = 'store_true', dest = 'DEDICATED', default = False,
 		help = 'only build Xash Dedicated Server [default: %(default)s]')
@@ -194,6 +197,7 @@ def options(opt):
 		opt.add_subproject(i.name)
 
 def configure(conf):
+	conf.env.DISABLE_ENGINE_MAINUI = conf.options.DISABLE_ENGINE_MAINUI
 	conf.load('fwgslib reconfigure compiler_optimizations')
 	if conf.options.ALLOW64:
 		conf.env.MSVC_TARGETS = ['x64']
@@ -372,7 +376,8 @@ def configure(conf):
 		]
 
 		opt_cflags = [
-			'-Werror=declaration-after-statement',
+			# The Team Beef VR integration uses C99 declarations throughout.
+			'-Wno-declaration-after-statement',
 			'-Werror=enum-conversion',
 			'-Wno-error=enum-float-conversion', # need this for cvars
 			'-Werror=implicit-int',

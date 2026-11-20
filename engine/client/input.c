@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "common.h"
+#include <VrBase.h>
 #include "input.h"
 #include "client.h"
 #include "vgui_draw.h"
@@ -139,7 +140,10 @@ void IN_MouseSavePos( void )
 	if( !in_mouseactive )
 		return;
 
-	Platform_GetMousePos( &in_lastvalidpos.x, &in_lastvalidpos.y );
+	int x, y;
+	Platform_GetMousePos(&x, &y);
+	in_lastvalidpos.x = x;
+	in_lastvalidpos.y = y;
 	in_mouse_savedpos = true;
 }
 
@@ -609,7 +613,7 @@ static void IN_Commands( void )
 
 		IN_CollectInput( &forward, &side, &pitch, &yaw, in_mouseinitialized && !m_ignore.value );
 
-		if( cls.key_dest == key_game )
+		if( cls.key_dest == key_game && !VR_IsEnabled() )
 		{
 			clgame.dllFuncs.pfnLookEvent( yaw, pitch );
 			clgame.dllFuncs.pfnMoveEvent( forward, side );

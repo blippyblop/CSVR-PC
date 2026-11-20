@@ -84,8 +84,8 @@ void Sys_DebugBreak( void )
 		SDL_SetWindowGrab( host.hWnd, SDL_FALSE );
 #endif // XASH_SDL
 
-#if _MSC_VER
-	__debugbreak();
+#if XASH_WIN32
+	DebugBreak();
 #else // !_MSC_VER
 	INLINE_RAISE( SIGINT );
 	INLINE_NANOSLEEP1(); // sometimes signal comes with delay, let it interrupt nanosleep

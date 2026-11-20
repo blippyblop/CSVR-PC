@@ -1,3 +1,4 @@
+#ifdef ANDROID
 #include "VrBase.h"
 #include "VrHaptics.h"
 #include <jni.h>
@@ -68,15 +69,15 @@ void VR_Haptics_OnCreate(jobject context) {
 	(*env)->CallStaticVoidMethod(env, g_hapticsClass, mid, (jobject)context);
 }
 
-void VR_Haptics_OnDestroy() {
+void VR_Haptics_OnDestroy(void) {
 	callStaticVoidMethod("onDestroy", "()V");
 }
 
-void VR_Haptics_Disable() {
+void VR_Haptics_Disable(void) {
 	callStaticVoidMethod("disable", "()V");
 }
 
-void VR_Haptics_Enable() {
+void VR_Haptics_Enable(void) {
 	callStaticVoidMethod("enable", "()V");
 }
 
@@ -110,6 +111,18 @@ void VR_Haptics_StopEvent(const char *event) {
 	(*env)->DeleteLocalRef(env, jEvent);
 }
 
-void VR_Haptics_EndFrame() {
+void VR_Haptics_EndFrame(void) {
 	callStaticVoidMethod("endframe", "()V");
 }
+
+#else
+#include "VrHaptics.h"
+/* External Android suit service. Controller vibration remains in VrInput.c. */
+void VR_Haptics_OnDestroy(void) {}
+void VR_Haptics_Disable(void) {}
+void VR_Haptics_Enable(void) {}
+void VR_Haptics_Event(const char* e, int p, int f, int i, float a, float h) {}
+void VR_Haptics_UpdateEvent(const char* e, int i, float a) {}
+void VR_Haptics_StopEvent(const char* e) {}
+void VR_Haptics_EndFrame(void) {}
+#endif

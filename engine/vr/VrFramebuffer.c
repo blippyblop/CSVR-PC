@@ -1,3 +1,4 @@
+#ifdef ANDROID
 #include "VrFramebuffer.h"
 #include "VrMath.h"
 
@@ -448,7 +449,7 @@ void ovrFramebuffer_SetCurrent(ovrFramebuffer* frameBuffer) {
 	glDisable( GL_FRAMEBUFFER_SRGB_EXT );
 }
 
-void ovrFramebuffer_SetNone() {
+void ovrFramebuffer_SetNone(void) {
 	GL(glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
 }
 
@@ -537,6 +538,12 @@ ovrApp
 ================================================================================
 */
 
+#endif
+
+#include "VrFramebuffer.h"
+#include "VrMath.h"
+#include <string.h>
+
 void ovrApp_Clear(ovrApp* app) {
 	app->Focused = false;
 	app->Instance = XR_NULL_HANDLE;
@@ -549,6 +556,7 @@ void ovrApp_Clear(ovrApp* app) {
 	app->FakeStageSpace = XR_NULL_HANDLE;
 	app->CurrentSpace = XR_NULL_HANDLE;
 	app->SessionActive = false;
+	app->ExitRequested = false;
 	app->SwapInterval = 1;
 	app->MainThreadTid = 0;
 	app->RenderThreadTid = 0;
@@ -573,6 +581,7 @@ void ovrApp_HandleSessionStateChanges(ovrApp* app, XrSessionState state) {
 		OXR(result = xrBeginSession(app->Session, &sessionBeginInfo));
 		app->SessionActive = (result == XR_SUCCESS);
 	} else if (state == XR_SESSION_STATE_STOPPING) {
+		app->Focused = false;
 		OXR(xrEndSession(app->Session));
 		app->SessionActive = false;
 	}
@@ -600,6 +609,7 @@ int ovrApp_HandleXrEvents(ovrApp* app) {
 			case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING: {
 				const XrEventDataInstanceLossPending* instance_loss_pending_event =
 						(XrEventDataInstanceLossPending*)(baseEventHeader);
+				app->ExitRequested = true;
 				ALOGV(
 						"xrPollEvent: received XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING event: time %f",
 						FromXrTime(instance_loss_pending_event->lossTime));
@@ -637,6 +647,11 @@ int ovrApp_HandleXrEvents(ovrApp* app) {
 						FromXrTime(session_state_changed_event->time));
 
 				switch (session_state_changed_event->state) {
+					case XR_SESSION_STATE_EXITING:
+					case XR_SESSION_STATE_LOSS_PENDING:
+						app->ExitRequested = true;
+						app->Focused = false;
+						break;
 					case XR_SESSION_STATE_FOCUSED:
 						app->Focused = true;
 						break;

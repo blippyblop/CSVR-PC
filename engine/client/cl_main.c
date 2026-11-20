@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include <stdbool.h>
+#include <VrBase.h>
 #include "common.h"
 #include "client.h"
 #include "net_encode.h"
@@ -3595,13 +3596,13 @@ void Host_ClientFrame( void )
 	if( cls.key_dest == key_game && cls.state == ca_active && !Con_Visible() )
 		Platform_SetTimer( cl_maxframetime.value );
 
-	bool leftEye = Cvar_VariableValue("vr_stereo_side") == 0;
+	bool leftEye = !VR_IsEnabled() || Cvar_VariableValue("vr_stereo_side") == 0;
 
 	// if running the server remotely, send intentions now after
 	// the incoming messages have been read
 	if( leftEye && !SV_Active( )) CL_SendCommand ();
 
-	clgame.dllFuncs.pfnFrame( host.frametime );
+	if (leftEye) clgame.dllFuncs.pfnFrame( host.frametime );
 
 	if (!leftEye) {
 		SCR_UpdateScreen ();

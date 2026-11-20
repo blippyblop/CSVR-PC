@@ -45,6 +45,8 @@ def options(opt):
 	grp.add_option('--enable-ffmpeg', action = 'store_true', dest = 'FFMPEG', default = False,
 		help = '') # hidden option, does nothing
 
+	grp.add_option('--openxr-prefix', action='store', default=None,
+		help='desktop OpenXR SDK prefix (include/ and lib/); otherwise use system SDK')
 	opt.load('sdl2')
 
 def find_sdl(conf):
@@ -109,6 +111,16 @@ def configure(conf):
 		else:
 			find_sdl(conf)
 
+
+	if conf.env.CLIENT and conf.env.DEST_OS != 'android':
+		if conf.options.openxr_prefix:
+			conf.env.INCLUDES_OPENXR = [os.path.join(conf.options.openxr_prefix, 'include')]
+			conf.env.LIBPATH_OPENXR = [os.path.join(conf.options.openxr_prefix, 'lib')]
+		conf.check_cc(lib='openxr_loader', uselib='OPENXR', uselib_store='OPENXR')
+		if conf.env.DEST_OS == 'win32':
+			conf.env.LIB_XR_GL = ['opengl32']
+		else:
+			conf.check_cfg(package='egl gl x11', args='--cflags --libs', uselib_store='XR_GL')
 
 	if conf.options.STATIC:
 		conf.env.STATIC = True
@@ -199,6 +211,8 @@ def build(bld):
 
 	if bld.env.CLIENT:
 		defines = []
+		if bld.env.DEST_OS != 'android':
+			libs += ['OPENXR', 'XR_GL']
 		if bld.env.XASH_SDL:
 			libs += ['SDL3' if bld.env.HAVE_SDL3 else 'SDL2']
 			source += bld.path.ant_glob(['platform/sdl/*.c'])
@@ -239,6 +253,6 @@ def build(bld):
 			title_id = 'XASH10000',
 			app_name = 'xash3d-fwgs',
 			rpath = bld.env.DEFAULT_RPATH,
-			lib=['GLESv3', 'EGL', 'openxr_loader'],
-			libpath=['../3rdparty/openxr/lib/android/arm64-v8a']
+			lib=['GLESv3', 'EGL', 'openxr_loader'] if bld.env.DEST_OS == 'android' else [],
+			libpath=['../3rdparty/openxr/lib/android/arm64-v8a'] if bld.env.DEST_OS == 'android' else []
 		)

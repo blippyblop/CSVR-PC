@@ -141,10 +141,10 @@ void RoundUpHullSize( vec3_t size )
 
 /*
 =================
-rsqrt
+Q_rsqrt
 =================
 */
-float rsqrt( float number )
+float Q_rsqrt( float number )
 {
 	int	i;
 	float	x, y;

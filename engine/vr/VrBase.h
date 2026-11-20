@@ -5,7 +5,7 @@
 #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, "OpenXR", __VA_ARGS__);
 #define ALOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, "OpenXR", __VA_ARGS__);
 #else
-#include <cstdio>
+#include <stdio.h>
 #define ALOGE(...) printf(__VA_ARGS__)
 #define ALOGV(...) printf(__VA_ARGS__)
 #endif
@@ -16,12 +16,13 @@
 #include <jni.h>
 #define XR_USE_PLATFORM_ANDROID 1
 #define XR_USE_GRAPHICS_API_OPENGL_ES 1
+#else
+#define XR_USE_GRAPHICS_API_OPENGL 1
 #endif
 
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 #include <stdbool.h>
-#include <jni.h>
 
 #if defined(_DEBUG) && (defined(XR_USE_GRAPHICS_API_OPENGL) || defined(XR_USE_GRAPHICS_API_OPENGL_ES))
 
@@ -32,22 +33,9 @@ void GLCheckErrors(const char* file, int line);
 #define GL(func) func;
 #endif
 
-#if defined(_DEBUG)
-static void OXR_CheckErrors(XrInstance instance, XrResult result, const char* function, bool failOnError) {
-	if (XR_FAILED(result)) {
-		char errorBuffer[XR_MAX_RESULT_STRING_SIZE];
-		xrResultToString(instance, result, errorBuffer);
-		if (failOnError) {
-			ALOGE("OpenXR error: %s: %s\n", function, errorBuffer);
-		} else {
-			ALOGV("OpenXR error: %s: %s\n", function, errorBuffer);
-		}
-	}
-}
-#define OXR(func) OXR_CheckErrors(VR_GetEngine()->appState.Instance, func, #func, true);
-#else
-#define OXR(func) func;
-#endif
+/* Check release builds too: ignoring an XR error can use invalid handles. */
+XrResult VR_CheckResult(XrResult result, const char* operation);
+#define OXR(func) VR_CheckResult((func), #func)
 
 enum { ovrMaxLayerCount = 2 };
 enum { ovrMaxNumEyes = 2 };
@@ -55,6 +43,7 @@ enum { ovrMaxNumEyes = 2 };
 typedef union {
 	XrCompositionLayerProjection Projection;
 	XrCompositionLayerCylinderKHR Cylinder;
+	XrCompositionLayerQuad Quad;
 } ovrCompositorLayer_Union;
 
 typedef struct {
@@ -63,6 +52,7 @@ typedef struct {
 	uint32_t Height;
 } ovrSwapChain;
 
+#ifdef ANDROID
 typedef struct
 {
 	EGLint		MajorVersion;
@@ -72,6 +62,7 @@ typedef struct
 	EGLSurface	TinySurface;
 	EGLContext	Context;
 } ovrEgl;
+#endif
 
 typedef struct {
 	int Width;
@@ -81,7 +72,11 @@ typedef struct {
 	uint32_t TextureSwapChainLength;
 	uint32_t TextureSwapChainIndex;
 	ovrSwapChain ColorSwapChain;
+#ifdef ANDROID
 	XrSwapchainImageOpenGLESKHR* ColorSwapChainImage;
+#else
+	XrSwapchainImageOpenGLKHR* ColorSwapChainImage;
+#endif
 	unsigned int* DepthBuffers;
 	unsigned int* FrameBuffers;
 } ovrFramebuffer;
@@ -104,6 +99,7 @@ typedef struct {
 	XrSpace FakeStageSpace;
 	XrSpace CurrentSpace;
 	int SessionActive;
+	bool ExitRequested;
 
 	int SwapInterval;
 	// These threads will be marked as performance threads.
@@ -124,6 +120,9 @@ typedef struct {
 	uint64_t frameIndex;
 	ovrApp appState;
 	XrTime predictedDisplayTime;
+	XrDuration displayPeriod;
+	bool frameStarted;
+	bool shouldRender;
 } engine_t;
 
 enum VRPlatformFlag {
@@ -135,6 +134,7 @@ enum VRPlatformFlag {
 	VR_PLATFORM_TRACKING_FLOOR,
 	VR_PLATFORM_VIEWPORT_SQUARE,
 	VR_PLATFORM_VIEWPORT_UNCENTERED,
+	VR_PLATFORM_EXTENSION_CYLINDER,
 	VR_PLATFORM_MAX
 };
 
@@ -150,3 +150,5 @@ void VR_SetPlatformFLag(enum VRPlatformFlag flag, bool value);
 void ovrApp_Clear(ovrApp* app);
 void ovrApp_Destroy(ovrApp* app);
 int ovrApp_HandleXrEvents(ovrApp* app);
+
+bool VR_IsEnabled(void);

@@ -807,7 +807,10 @@ void SCR_TimeRefresh_f( void )
 	// run without page flipping like GoldSrc
 	if( gEngfuncs.Cmd_Argc() == 1 )
 	{
-		pglDrawBuffer( GL_FRONT );
+		GLint framebuffer = 0;
+		if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0)
+			pglGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+		pglDrawBuffer(framebuffer ? GL_COLOR_ATTACHMENT0 : GL_FRONT);
 		for( i = 0; i < 128; i++ )
 		{
 			gpGlobals->viewangles[1] = i / 128.0f * 360.0f;

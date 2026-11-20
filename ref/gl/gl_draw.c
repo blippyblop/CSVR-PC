@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "gl_local.h"
+#include "xr_ui.h"
 
 /*
 =============
@@ -217,6 +218,18 @@ void R_Set2DMode( qboolean enable )
 		pglMatrixMode( GL_PROJECTION );
 		pglLoadIdentity();
 		pglOrtho( 0, gpGlobals->width, gpGlobals->height, 0, -99999, 99999 );
+#ifndef ANDROID
+		if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0 && gEngfuncs.pfnGetCvarFloat("vr_gamemode") > 0) {
+			float eye[3] = {gEngfuncs.pfnGetCvarFloat("vr_eye_x"), gEngfuncs.pfnGetCvarFloat("vr_eye_y"), gEngfuncs.pfnGetCvarFloat("vr_eye_z")};
+			float q[4] = {gEngfuncs.pfnGetCvarFloat("vr_eye_qx"), gEngfuncs.pfnGetCvarFloat("vr_eye_qy"), gEngfuncs.pfnGetCvarFloat("vr_eye_qz"), gEngfuncs.pfnGetCvarFloat("vr_eye_qw")};
+			float fov[4] = {gEngfuncs.pfnGetCvarFloat("vr_eye_left"), gEngfuncs.pfnGetCvarFloat("vr_eye_right"), gEngfuncs.pfnGetCvarFloat("vr_eye_down"), gEngfuncs.pfnGetCvarFloat("vr_eye_up")};
+			matrix4x4 hud;
+			XRUI_Projection(hud, gpGlobals->width, gpGlobals->height,
+				Q_max(0.25f, gEngfuncs.pfnGetCvarFloat("vr_hud_distance")),
+				Q_max(0.1f, gEngfuncs.pfnGetCvarFloat("vr_hud_width")), eye, q, fov);
+			GL_LoadMatrix(hud);
+		}
+#endif
 		pglMatrixMode( GL_MODELVIEW );
 		pglLoadIdentity();
 

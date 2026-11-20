@@ -134,6 +134,7 @@ XrActionStateFloat GetActionStateFloat(XrAction action) {
 	state.type = XR_TYPE_ACTION_STATE_FLOAT;
 
 	OXR(xrGetActionStateFloat(VR_GetEngine()->appState.Session, &getInfo, &state));
+	if (!state.isActive) state.currentState = 0;
 	return state;
 }
 
@@ -146,6 +147,7 @@ XrActionStateBoolean GetActionStateBoolean(XrAction action) {
 	state.type = XR_TYPE_ACTION_STATE_BOOLEAN;
 
 	OXR(xrGetActionStateBoolean(VR_GetEngine()->appState.Session, &getInfo, &state));
+	if (!state.isActive) state.currentState = XR_FALSE;
 	return state;
 }
 
@@ -158,8 +160,50 @@ XrActionStateVector2f GetActionStateVector2(XrAction action) {
 	state.type = XR_TYPE_ACTION_STATE_VECTOR2F;
 
 	OXR(xrGetActionStateVector2f(VR_GetEngine()->appState.Session, &getInfo, &state));
+	if (!state.isActive) state.currentState = (XrVector2f){0, 0};
 	return state;
 }
+
+#ifndef ANDROID
+static void SuggestDesktopProfile(engine_t* engine, const char* profile, int kind) {
+	XrActionSuggestedBinding bindings[32];
+	unsigned int count = 0;
+#define BIND(action, path) bindings[count++] = ActionSuggestedBinding(action, path)
+	BIND(handPoseLeftAction, "/user/hand/left/input/aim/pose");
+	BIND(handPoseRightAction, "/user/hand/right/input/aim/pose");
+	BIND(vibrateLeftFeedback, "/user/hand/left/output/haptic");
+	BIND(vibrateRightFeedback, "/user/hand/right/output/haptic");
+	if (kind == 4) { // Khronos simple controller: select/menu, no axes or face buttons
+		BIND(indexLeftAction, "/user/hand/left/input/select/click");
+		BIND(indexRightAction, "/user/hand/right/input/select/click");
+		BIND(menuAction, "/user/hand/left/input/menu/click");
+	} else {
+		BIND(indexLeftAction, "/user/hand/left/input/trigger/value");
+		BIND(indexRightAction, "/user/hand/right/input/trigger/value");
+		BIND(gripLeftAction, kind == 1 ? "/user/hand/left/input/squeeze/force" : kind == 0 ? "/user/hand/left/input/squeeze/value" : "/user/hand/left/input/squeeze/click");
+		BIND(gripRightAction, kind == 1 ? "/user/hand/right/input/squeeze/force" : kind == 0 ? "/user/hand/right/input/squeeze/value" : "/user/hand/right/input/squeeze/click");
+		BIND(moveOnLeftJoystickAction, kind == 3 ? "/user/hand/left/input/trackpad" : "/user/hand/left/input/thumbstick");
+		BIND(moveOnRightJoystickAction, kind == 3 ? "/user/hand/right/input/trackpad" : "/user/hand/right/input/thumbstick");
+		BIND(thumbstickLeftClickAction, kind == 3 ? "/user/hand/left/input/trackpad/click" : "/user/hand/left/input/thumbstick/click");
+		BIND(thumbstickRightClickAction, kind == 3 ? "/user/hand/right/input/trackpad/click" : "/user/hand/right/input/thumbstick/click");
+		if (kind != 1) BIND(menuAction, "/user/hand/left/input/menu/click");
+		if (kind == 0 || kind == 1) {
+			BIND(buttonXAction, kind == 0 ? "/user/hand/left/input/x/click" : "/user/hand/left/input/a/click");
+			BIND(buttonYAction, kind == 0 ? "/user/hand/left/input/y/click" : "/user/hand/left/input/b/click");
+			BIND(buttonAAction, "/user/hand/right/input/a/click");
+			BIND(buttonBAction, "/user/hand/right/input/b/click");
+		} else {
+			BIND(buttonAAction, "/user/hand/right/input/menu/click");
+		}
+	}
+#undef BIND
+	XrInteractionProfileSuggestedBinding suggested = {XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+	OXR(xrStringToPath(engine->appState.Instance, profile, &suggested.interactionProfile));
+	suggested.countSuggestedBindings = count;
+	suggested.suggestedBindings = bindings;
+	OXR(xrSuggestInteractionProfileBindings(engine->appState.Instance, &suggested));
+}
+#endif
 
 void IN_VRInit( engine_t *engine ) {
 	if (inputInitialized)
@@ -188,6 +232,7 @@ void IN_VRInit( engine_t *engine ) {
 	handPoseLeftAction = CreateAction(runningActionSet, XR_ACTION_TYPE_POSE_INPUT, "hand_pose_left", NULL, 1, &leftHandPath);
 	handPoseRightAction = CreateAction(runningActionSet, XR_ACTION_TYPE_POSE_INPUT, "hand_pose_right", NULL, 1, &rightHandPath);
 
+#ifdef ANDROID
 	XrPath interactionProfilePath = XR_NULL_PATH;
 	if (VR_GetPlatformFlag(VR_PLATFORM_CONTROLLER_QUEST)) {
 		OXR(xrStringToPath(engine->appState.Instance, "/interaction_profiles/oculus/touch_controller", &interactionProfilePath));
@@ -232,6 +277,14 @@ void IN_VRInit( engine_t *engine ) {
 	suggestedBindings.suggestedBindings = bindings;
 	suggestedBindings.countSuggestedBindings = currBinding;
 	OXR(xrSuggestInteractionProfileBindings(engine->appState.Instance, &suggestedBindings));
+
+#else
+	SuggestDesktopProfile(engine, "/interaction_profiles/oculus/touch_controller", 0);
+	SuggestDesktopProfile(engine, "/interaction_profiles/valve/index_controller", 1);
+	SuggestDesktopProfile(engine, "/interaction_profiles/microsoft/motion_controller", 2);
+	SuggestDesktopProfile(engine, "/interaction_profiles/htc/vive_controller", 3);
+	SuggestDesktopProfile(engine, "/interaction_profiles/khr/simple_controller", 4);
+#endif
 
 	// Attach actions
 	XrSessionActionSetsAttachInfo attachInfo = {};
@@ -302,6 +355,12 @@ void IN_VRInit( engine_t *engine ) {
 }
 
 void IN_VRInputFrame( engine_t* engine ) {
+	if (!engine->appState.Focused) {
+		lButtons = rButtons = 0;
+		lActive = rActive = false;
+		memset(moveJoystickState, 0, sizeof(moveJoystickState));
+		return;
+	}
 
 	// sync action data
 	XrActiveActionSet activeActionSet = {};
@@ -356,8 +415,8 @@ void IN_VRInputFrame( engine_t* engine ) {
 	if (moveJoystickState[1].currentState.y < -deadZone) rButtons |= ovrButton_Down;
 
 	//check if controller is active
-	lActive = moveJoystickState[0].isActive;
-	rActive = moveJoystickState[1].isActive;
+	lActive = ActionPoseIsActive(handPoseLeftAction, leftHandPath);
+	rActive = ActionPoseIsActive(handPoseRightAction, rightHandPath);
 }
 
 
@@ -377,11 +436,18 @@ XrVector2f IN_VRGetJoystickState( int controllerIndex ) {
 }
 
 XrPosef IN_VRGetPose( int controllerIndex ) {
+	XrPosef fallback = XrPosef_Identity();
 	engine_t* engine = VR_GetEngine();
 	XrSpaceLocation loc = {};
 	loc.type = XR_TYPE_SPACE_LOCATION;
 	XrSpace aimSpace[] = { leftControllerAimSpace, rightControllerAimSpace };
-	xrLocateSpace(aimSpace[controllerIndex], engine->appState.CurrentSpace, (XrTime)(engine->predictedDisplayTime), &loc);
+	if (!aimSpace[controllerIndex]) return fallback;
+	XrResult result = xrLocateSpace(aimSpace[controllerIndex], engine->appState.CurrentSpace, engine->predictedDisplayTime, &loc);
+	XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	if (XR_FAILED(result) || (loc.locationFlags & valid) != valid) {
+		if (controllerIndex == 0) lActive = false; else rActive = false;
+		return fallback;
+	}
 	return loc.pose;
 }
 
@@ -402,4 +468,16 @@ void IN_VRSetDeadzone( float value ) {
 
 void IN_VRSetSwapThumbsticks( bool swap ) {
     swapThumbsticks = swap;
+}
+
+void IN_VRDestroy(engine_t* engine) {
+	if (leftControllerAimSpace) OXR(xrDestroySpace(leftControllerAimSpace));
+	if (rightControllerAimSpace) OXR(xrDestroySpace(rightControllerAimSpace));
+	leftControllerAimSpace = rightControllerAimSpace = XR_NULL_HANDLE;
+	if (runningActionSet) OXR(xrDestroyActionSet(runningActionSet));
+	runningActionSet = XR_NULL_HANDLE;
+	inputInitialized = 0;
+	lActive = rActive = false;
+	lButtons = rButtons = 0;
+	memset(moveJoystickState, 0, sizeof(moveJoystickState));
 }

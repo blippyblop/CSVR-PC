@@ -730,7 +730,11 @@ qboolean R_Init( void )
 	requested_cmdline[0] = 0;
 	requested_cvar[0] = 0;
 
-	success = R_LoadRenderer( "gles3compat" ); //VR always uses GLESv3
+	#if XASH_ANDROID
+	success = R_LoadRenderer("gles3compat");
+#else
+	success = false; // Desktop OpenXR uses the native OpenGL renderer.
+#endif
 	if( !success && Sys_GetParmFromCmdLine( "-ref", requested_cmdline ))
 		success = R_LoadRenderer( requested_cmdline );
 

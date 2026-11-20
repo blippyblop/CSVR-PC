@@ -289,8 +289,10 @@ static void V_AdjustFov( float *fov_x, float *fov_y, float width, float height, 
 		Cvar_SetValue("vr_zoomfix", 0);
 	}
 
-	*fov_x *= VR_GetConfigFloat(VR_CONFIG_VIEWPORT_FOVX) / 90.0f;
-	*fov_y *= VR_GetConfigFloat(VR_CONFIG_VIEWPORT_FOVY) / 90.0f;
+	if (VR_IsEnabled()) {
+		*fov_x *= VR_GetConfigFloat(VR_CONFIG_VIEWPORT_FOVX) / 90.0f;
+		*fov_y *= VR_GetConfigFloat(VR_CONFIG_VIEWPORT_FOVY) / 90.0f;
+	}
 	Cvar_LazySet("vr_superzoomed", superzoomed ? 1 : 0);
 	Cvar_LazySet("vr_zoomed", zoomed ? 1 : 0);
 }
@@ -388,6 +390,8 @@ void V_RenderView( void )
 	// HACKHACK: make ref params static
 	// not really critical but allows client.dll to take address of refdef and don't trigger ASan
 	static ref_params_t	rp;
+	static ref_viewpass_t xrViews[8];
+	static int xrViewCount;
 	ref_viewpass_t	rvp;
 	int		viewnum = 0;
 
@@ -395,6 +399,16 @@ void V_RenderView( void )
 		return; // still loading
 
 	V_CalcViewRect ();	// compute viewport rectangle
+	/* Client view calculation advances bob, interpolation, chase and shake
+	 * state. Both eyes must use the same result from the same simulation tick. */
+	if (VR_IsEnabled() && Cvar_VariableValue("vr_stereo_side") != 0) {
+		ref.dllFuncs.R_Set2DMode(false);
+		ref.dllFuncs.GL_BackendStartFrame();
+		for (int i = 0; i < xrViewCount; ++i) GL_RenderFrame(&xrViews[i]);
+		ref.dllFuncs.GL_BackendEndFrame();
+		return;
+	}
+	xrViewCount = 0;
 	V_SetRefParams( &rp );
 	V_SetupViewModel ();
 	ref.dllFuncs.R_Set2DMode( false );
@@ -406,6 +420,7 @@ void V_RenderView( void )
 		clgame.dllFuncs.pfnCalcRefdef( &rp );
 		V_GetRefParams( &rp, &rvp );
 		V_RefApplyOverview( &rvp );
+		if (VR_IsEnabled() && xrViewCount < 8) xrViews[xrViewCount++] = rvp;
 
 		if( viewnum == 0 && FBitSet( rvp.flags, RF_ONLY_CLIENTDRAW ))
 		{
@@ -524,6 +539,9 @@ V_PostRender
 void V_PostRender( void )
 {
 	qboolean		draw_2d = false;
+	/* Project the spatial crosshair with this eye's completed world matrix. */
+	if (VR_IsEnabled() && Cvar_VariableValue("vr_gamemode") > 0)
+		Host_VRWeaponCrosshair(Cvar_VariableValue("vr_zoomed") > 0 && Cvar_VariableValue("vr_zoomfix") == 0);
 
 	ref.dllFuncs.R_AllowFog( false );
 	ref.dllFuncs.R_Set2DMode( true );
@@ -582,8 +600,8 @@ void V_PostRender( void )
 	SCR_MakeScreenShot();
 	ref.dllFuncs.R_AllowFog( true );
 
-	qboolean leftEye = Cvar_VariableValue("vr_stereo_side") == 0;
-	if (!leftEye) {
+	/* Complete and flush each eye before releasing its swapchain image. */
+	{
 		Platform_SetTimer( 0.0f );
 		ref.dllFuncs.R_EndFrame();
 		V_CheckGammaEnd();

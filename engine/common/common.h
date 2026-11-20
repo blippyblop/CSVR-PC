@@ -44,6 +44,7 @@ XASH SPECIFIC			- sort of hack that works only in Xash3D not in GoldSrc
 #include <stdio.h>
 #include <stdlib.h> // rand, adbs
 #include <stdarg.h> // va
+#include <stdbool.h>
 
 #if !XASH_WIN32
 #include <stddef.h> // size_t
@@ -572,7 +573,7 @@ bool Host_VRAdjustInput( vec3_t handAngles, vec3_t handPosition, vec3_t hmdAngle
 void Host_VRButtonMap( unsigned int button, int currentButtons, int lastButtons, const char* name, bool alt );
 void Host_VRButtonMapping( bool swapped, unsigned int lbuttons, unsigned int rbuttons );
 void Host_VRBUttonMaskThumbstick( float x, float y, unsigned int* buttons );
-bool Host_VRConfig();
+bool Host_VRConfig(void);
 void Host_VRCursor( bool cursorActive, float x, float y, vec2_t cursor );
 void Host_VRCustomCommand( char* action );
 void Host_VRHaptics( bool rightHanded, vec3_t weaponAngles );

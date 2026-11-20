@@ -66,7 +66,7 @@ def configure(conf):
 		return
 
 	# win32 has it's own dbghelp-based backtrace, that's why we ship PDBs
-	if conf.env.COMPILER_CC == 'msvc':
+	if conf.env.DEST_OS == 'win32':
 		conf.env.DISABLE_LIBBACKTRACE = True
 		return
 

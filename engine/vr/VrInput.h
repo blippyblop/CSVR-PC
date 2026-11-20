@@ -37,3 +37,5 @@ bool IN_VRIsActive( int controllerIndex );
 void IN_VRSetDeadzone( float value );
 void IN_VRSetSwapThumbsticks( bool swap );
 void IN_VR_Vibrate( float duration, int chan, float intensity );
+
+void IN_VRDestroy(engine_t* engine);

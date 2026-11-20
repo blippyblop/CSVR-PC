@@ -30,6 +30,8 @@ GNU General Public License for more details.
 #include <emscripten/emscripten.h>
 #endif
 #include "common.h"
+#include "VrBase.h"
+#include "VrRenderer.h"
 #include "base_cmd.h"
 #include "client.h"
 #include "server.h"
@@ -157,6 +159,8 @@ static void Sys_PrintUsage( const char *exename )
 	O("-disablehelp       ", "disable this message")
 #if !XASH_DEDICATED
 	O("-dedicated         ", "run engine in dedicated mode")
+	O("-vr                ", "enable desktop OpenXR")
+	O("-novr              ", "use the desktop renderer without an XR session")
 #endif
 
 "\nNetworking options:\n"
@@ -225,12 +229,12 @@ static void Sys_PrintUsage( const char *exename )
 #undef O
 #undef XASH_EXE
 
-	// HACKHACK: pretty output in dedicated
+	/* Command-line help must also work without a windowing session. */
+	fprintf(stderr, "%s\n", version_str);
 #if XASH_MESSAGEBOX != MSGBOX_STDERR
-	Platform_MessageBox( version_str, usage_str, false );
+	fputs(usage_str, stderr);
 #else
-	fprintf( stderr, "%s\n", version_str );
-	fprintf( stderr, usage_str, exename );
+	fprintf(stderr, usage_str, exename);
 #endif
 
 	Sys_Quit( NULL );
@@ -250,12 +254,12 @@ static void Sys_PrintBugcompUsage( const char *exename )
 		p += Q_snprintf( p, sizeof( usage_str ) - ( usage_str - p ), "   %s: %s\n", bugcomp_features[i].arg, bugcomp_features[i].msg );
 	p += Q_snprintf( p, sizeof( usage_str ) - ( usage_str - p ), "\nIt is possible to combine multiple flags with '+' characters.\nExample: -bugcomp flag1+flag2+flag3...\n" );
 
-	// HACKHACK: pretty output in dedicated
+	/* Command-line help must also work without a windowing session. */
+	fprintf(stderr, "%s\n", version_str);
 #if XASH_MESSAGEBOX != MSGBOX_STDERR
-	Platform_MessageBox( version_str, usage_str, false );
+	fputs(usage_str, stderr);
 #else
-	fprintf( stderr, "%s\n", version_str );
-	fprintf( stderr, usage_str, exename );
+	fprintf(stderr, usage_str, exename);
 #endif
 
 	Sys_Quit( NULL );
@@ -768,7 +772,7 @@ static qboolean Host_FilterTime( double time )
 	dt = host.realtime - oldtime;
 
 	// clamp the fps in multiplayer games
-	if( !Host_Autosleep( dt, scale ))
+	if( !VR_IsEnabled() && !Host_Autosleep( dt, scale ))
 		return false;
 
 	host.frametime = host.realtime - oldtime;
@@ -798,20 +802,21 @@ void Host_Frame( double time )
 
 	t1 = Sys_DoubleTime();
 
-	if (!Host_VRInitFrame()) {
+	Cvar_FullSet("vr_enabled", VR_IsEnabled() ? "1" : "0", FCVAR_READ_ONLY);
+	Host_InputFrame ();  // Always pump SDL, including while the XR session is idle.
+	if (VR_IsEnabled() && !Host_VRInitFrame()) {
 		return;
 	}
 
 	if( host.framecount == 0 )
 		Con_DPrintf( "Time to first frame: %.3f seconds\n", t1 - host.starttime );
 
-	//Host_InputFrame ();  // input frame
-	Host_VRInputFrame ();  // VR input frame
+	if (VR_IsEnabled()) Host_VRInputFrame ();
 	Host_ClientBegin (); // begin client
 	Host_GetCommands (); // dedicated in
 	Host_ServerFrame (); // server frame
-    Host_VRClientFrame (); // VR client frame
-    //Host_ClientFrame (); // client frame
+	if (VR_IsEnabled()) Host_VRClientFrame ();
+	else Host_ClientFrame ();
 
 	HTTP_Run();			 // both server and client
 
@@ -1402,6 +1407,7 @@ void Host_ShutdownWithReason( const char *reason )
 	SV_Shutdown( "Server shutdown\n" );
 	SV_UnloadProgs();
 	SV_ShutdownFilter();
+	VR_Destroy(VR_GetEngine());
 	CL_Shutdown();
 
 	SoundList_Shutdown();

@@ -41,6 +41,7 @@ GNU General Public License for more details.
 #include "defaults.h"
 #include "const.h"
 #include "crtlib.h"
+#include "utflib.h"
 #include "crclib.h"
 #include "filesystem.h"
 #include "filesystem_internal.h"

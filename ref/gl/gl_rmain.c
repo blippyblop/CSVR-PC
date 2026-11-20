@@ -28,7 +28,7 @@ float		gldepthmin, gldepthmax;
 ref_instance_t	RI;
 
 
-#define VR_IPD 0.065f
+
 
 static int R_RankForRenderMode( int rendermode )
 {
@@ -349,6 +349,8 @@ R_SetupFrustum
 void R_SetupFrustum( void )
 {
 	const ref_overview_t	*ov = gEngfuncs.GetOverviewParms();
+	vec3_t untrackedOrigin;
+	VectorCopy(RI.vieworg, untrackedOrigin);
 
 	if( RP_NORMALPASS() && ( ENGINE_GET_PARM( PARM_WATER_LEVEL ) >= 3 ) && ENGINE_GET_PARM( PARM_QUAKE_COMPATIBLE ))
 	{
@@ -359,6 +361,7 @@ void R_SetupFrustum( void )
 	// build the transformation matrix for the given view angles
 	AngleVectors( RI.viewangles, RI.vforward, RI.vright, RI.vup );
 
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0 && gEngfuncs.pfnGetCvarFloat("vr_gamemode") > 0) {
 	// Share player transform with the client
 	gEngfuncs.Cvar_SetValue("vr_player_dir_x", RI.vforward[0]);
 	gEngfuncs.Cvar_SetValue("vr_player_dir_y", RI.vforward[1]);
@@ -444,6 +447,37 @@ void R_SetupFrustum( void )
 		VectorCopy(RI.vieworg, lastPos);
 	}
 
+	/* The engine camera is at the tracked head center. Apply the runtime eye
+	 * offset in that head basis, then its relative orientation (canted HMDs). */
+	{
+		vec3_t forward, right, up;
+		float ex = gEngfuncs.pfnGetCvarFloat("vr_eye_x") * scale;
+		float ey = gEngfuncs.pfnGetCvarFloat("vr_eye_y") * scale;
+		float ez = gEngfuncs.pfnGetCvarFloat("vr_eye_z") * scale;
+		AngleVectors(RI.viewangles, forward, right, up);
+		if (getenv("CSVR_XR_TRACE")) {
+			static int n;
+			if (n++ < 10) gEngfuncs.Con_Printf("XR translation camera=(%.3f %.3f %.3f) beforeEye=(%.3f %.3f %.3f) eye=(%.4f %.4f %.4f) scale=%.2f right=(%.4f %.4f %.4f)\n", gEngfuncs.pfnGetCvarFloat("vr_camera_x"), gEngfuncs.pfnGetCvarFloat("vr_camera_y"), gEngfuncs.pfnGetCvarFloat("vr_camera_z"), RI.vieworg[0], RI.vieworg[1], RI.vieworg[2], ex, ey, ez, scale, right[0], right[1], right[2]);
+		}
+		for (int axis = 0; axis < 3; ++axis)
+			RI.vieworg[axis] += right[axis] * ex + up[axis] * ey - forward[axis] * ez;
+		RI.viewangles[PITCH] += gEngfuncs.pfnGetCvarFloat("vr_eye_pitch");
+		RI.viewangles[YAW] += gEngfuncs.pfnGetCvarFloat("vr_eye_yaw");
+		RI.viewangles[ROLL] += gEngfuncs.pfnGetCvarFloat("vr_eye_roll");
+#ifndef ANDROID
+		RI.viewangles[PITCH] = gEngfuncs.pfnGetCvarFloat("vr_eye_pitch");
+		RI.viewangles[YAW] = gEngfuncs.pfnGetCvarFloat("vr_eye_yaw");
+		RI.viewangles[ROLL] = gEngfuncs.pfnGetCvarFloat("vr_eye_roll");
+#endif
+		AngleVectors(RI.viewangles, RI.vforward, RI.vright, RI.vup);
+	}
+	VectorCopy(RI.vieworg, RI.pvsorigin);
+	if (getenv("CSVR_XR_TRACE")) {
+		static int count;
+		if (count++ < 10) gEngfuncs.Con_Printf("XR renderer eye=%.0f base=(%.3f %.3f %.3f) org=(%.3f %.3f %.3f) angles=(%.3f %.3f %.3f)\n", gEngfuncs.pfnGetCvarFloat("vr_stereo_side"), untrackedOrigin[0], untrackedOrigin[1], untrackedOrigin[2], RI.vieworg[0], RI.vieworg[1], RI.vieworg[2], RI.viewangles[0], RI.viewangles[1], RI.viewangles[2]);
+	}
+	}
+
 	if( !r_lockfrustum.value )
 	{
 		VectorCopy( RI.vieworg, RI.cullorigin );
@@ -451,17 +485,18 @@ void R_SetupFrustum( void )
 		VectorCopy( RI.vright, RI.cull_vright );
 		VectorCopy( RI.vup, RI.cull_vup );
 
-		// VR stereo separation for culling
-		vec3_t offset;
-		VectorCopy( RI.vright, offset );
-		VectorScale( offset, scale * VR_IPD / 2.0f, offset );
-		VectorScale( offset, (gEngfuncs.pfnGetCvarFloat("vr_stereo_side") - 0.5f) * 2.0f, offset );
-		VectorSubtract( RI.cullorigin, offset, RI.cullorigin );
 	}
 
 	if( RI.drawOrtho )
 		GL_FrustumInitOrtho( &RI.frustum, ov->xLeft, ov->xRight, ov->yTop, ov->yBottom, ov->zNear, ov->zFar );
-	else GL_FrustumInitProj( &RI.frustum, 0.0f, R_GetFarClip(), RI.fov_x, RI.fov_y ); // NOTE: we ignore nearplane here (mirrors only)
+	else {
+		float fx = RI.fov_x, fy = RI.fov_y;
+		if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0 && gEngfuncs.pfnGetCvarFloat("vr_gamemode") > 0) {
+			fx = RAD2DEG(2 * atan(Q_max(fabs(gEngfuncs.pfnGetCvarFloat("vr_eye_left")), fabs(gEngfuncs.pfnGetCvarFloat("vr_eye_right")))));
+			fy = RAD2DEG(2 * atan(Q_max(fabs(gEngfuncs.pfnGetCvarFloat("vr_eye_down")), fabs(gEngfuncs.pfnGetCvarFloat("vr_eye_up")))));
+		}
+		GL_FrustumInitProj(&RI.frustum, 0, R_GetFarClip(), fx, fy);
+	} // NOTE: we ignore nearplane here (mirrors only)
 }
 
 /*
@@ -491,6 +526,12 @@ static void R_SetupProjectionMatrix( matrix4x4 m )
 	xMax = zNear * tan( RI.fov_x * M_PI_F / 360.0f );
 	xMin = -xMax;
 
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0 && gEngfuncs.pfnGetCvarFloat("vr_gamemode") > 0) {
+		xMin = zNear * gEngfuncs.pfnGetCvarFloat("vr_eye_left");
+		xMax = zNear * gEngfuncs.pfnGetCvarFloat("vr_eye_right");
+		yMin = zNear * gEngfuncs.pfnGetCvarFloat("vr_eye_down");
+		yMax = zNear * gEngfuncs.pfnGetCvarFloat("vr_eye_up");
+	}
 	Matrix4x4_CreateProjection( m, xMax, xMin, yMax, yMin, zNear, zFar );
 }
 
@@ -502,9 +543,6 @@ R_SetupModelviewMatrix
 static void R_SetupModelviewMatrix( matrix4x4 m )
 {
 	Matrix4x4_CreateModelview( m );
-	Matrix4x4_ConcatTranslate(m, 0, gEngfuncs.pfnGetCvarFloat("vr_worldscale") * (VR_IPD / 2.0f) *
-											((gEngfuncs.pfnGetCvarFloat("vr_stereo_side") - 0.5f) * 2.0f), 0);
-
 	Matrix4x4_ConcatRotate( m, -RI.viewangles[2], 1, 0, 0 );
 	Matrix4x4_ConcatRotate( m, -RI.viewangles[0], 0, 1, 0 );
 	Matrix4x4_ConcatRotate( m, -RI.viewangles[1], 0, 0, 1 );
@@ -1165,7 +1203,11 @@ void R_BeginFrame( qboolean clearScene )
 	R_Set2DMode( true );
 
 	// draw buffer stuff
-	pglDrawBuffer( GL_BACK );
+	GLint framebuffer = 0;
+	if (gEngfuncs.pfnGetCvarFloat("vr_enabled") > 0)
+		pglGetIntegerv(GL_FRAMEBUFFER_BINDING, &framebuffer);
+	/* Loading screens can render between XR frames, on the default buffer. */
+	pglDrawBuffer(framebuffer ? GL_COLOR_ATTACHMENT0 : GL_BACK);
 
 	// update texture parameters
 	if( FBitSet( gl_texture_nearest.flags|gl_lightmap_nearest.flags|gl_texture_anisotropy.flags|gl_texture_lodbias.flags, FCVAR_CHANGED ))

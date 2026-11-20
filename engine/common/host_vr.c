@@ -13,21 +13,22 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 */
 
-#if !XASH_WIN32
-#include <unistd.h> // fork
 #include <stdbool.h>
+#include <SDL.h>
 #include <VrBase.h>
 #include <VrInput.h>
 #include <VrHaptics.h>
 #include <VrRenderer.h>
 
-#endif
 #include "common.h"
 #include "client.h"
 #include "input.h"
 #include <cl_tent.h>
 #include <platform/sdl/events.h>
+#include "xr_ui.h"
+#include "xr_menu.h"
 
+CVAR_DEFINE_AUTO( vr_enabled, "0", FCVAR_READ_ONLY, "An OpenXR session is enabled" );
 CVAR_DEFINE_AUTO( vr_camera_x, "0", FCVAR_MOVEVARS, "Offset x of the camera" );
 CVAR_DEFINE_AUTO( vr_camera_y, "0", FCVAR_MOVEVARS, "Offset y of the camera" );
 CVAR_DEFINE_AUTO( vr_camera_z, "0", FCVAR_MOVEVARS, "Offset z of the camera" );
@@ -136,14 +137,30 @@ CVAR_DEFINE_AUTO( vr_walkdirection, "1", FCVAR_ARCHIVE, "0=direction from contro
 CVAR_DEFINE_AUTO( vr_weapon_restore, "1", FCVAR_ARCHIVE, "0=keep models/alignment, 1=restore models/alignment" );
 CVAR_DEFINE_AUTO( vr_worldscale, "30", FCVAR_ARCHIVE, "Sets the world scale for stereo separation" );
 CVAR_DEFINE_AUTO( vr_xhair, "1", FCVAR_ARCHIVE, "Cross-hair rendering" );
+CVAR_DEFINE_AUTO( vr_hud_distance, "2", FCVAR_ARCHIVE, "Desktop HUD plane distance in metres" );
+CVAR_DEFINE_AUTO( vr_hud_width, "1.6", FCVAR_ARCHIVE, "Desktop HUD plane width in metres" );
 
 vec3_t vr_hmd_offset = {};
 vec2_t vr_input = {};
 bool vr_ducked = false;
+#ifndef ANDROID
+static float vr_tracking_yaw;
+static bool vr_tracking_anchored;
+#endif
 extern bool sdl_keyboard_requested;
 
 void Host_VRInit( void )
 {
+	const char* eyeVariables[] = {"vr_eye_x", "vr_eye_y", "vr_eye_z", "vr_eye_pitch", "vr_eye_yaw", "vr_eye_roll",
+		"vr_eye_left", "vr_eye_right", "vr_eye_down", "vr_eye_up", "vr_eye_qx", "vr_eye_qy", "vr_eye_qz"};
+	Cvar_RegisterVariable(&vr_enabled);
+	Cvar_RegisterVariable(&vr_hud_distance);
+	Cvar_RegisterVariable(&vr_hud_width);
+	Cvar_Get("vr_eye_qw", "1", FCVAR_READ_ONLY, "Eye orientation relative to head");
+	Cvar_Get("vr_menu_slots", "0", 0, "Valid slots in the client text menu");
+	Cvar_Get("vr_menu_selection", "0", 0, "Selected client menu slot");
+	for (unsigned int i = 0; i < sizeof(eyeVariables)/sizeof(eyeVariables[0]); ++i)
+		Cvar_Get(eyeVariables[i], "0", FCVAR_READ_ONLY, "Current OpenXR eye geometry");
 	Cvar_RegisterVariable( &vr_camera_x );
 	Cvar_RegisterVariable( &vr_camera_y );
 	Cvar_RegisterVariable( &vr_camera_z );
@@ -257,7 +274,7 @@ bool Host_VRInitFrame( void )
 {
 	static bool firstFrame = true;
 	engine_t* engine = VR_GetEngine();
-	if (firstFrame) {
+	if (firstFrame || !engine->appState.Session) {
 		VR_EnterVR(engine);
 		IN_VRInit(engine);
 		VR_Haptics_Enable();
@@ -269,21 +286,64 @@ bool Host_VRInitFrame( void )
 		VR_SetConfig(VR_CONFIG_VIEWPORT_VALID, true);
 	}
 	bool force2d = Cvar_VariableValue("vr_force2d") > 0.5f;
-	bool gameMode = !force2d && !host.mouse_visible && cls.state == ca_active && cls.key_dest == key_game;
+	bool gameMode = !force2d && (!host.mouse_visible || Touch_MenuActive()) && cls.state == ca_active && cls.key_dest == key_game;
 	bool mapOverview = Cvar_VariableValue("vr_spectator") > 4.5f;
 	int vrMode = mapOverview ? VR_MODE_MONO_6DOF : VR_MODE_STEREO_6DOF;
 	int mode = gameMode ? vrMode : VR_MODE_MONO_SCREEN;
 	VR_SetConfig(VR_CONFIG_MODE, mode);
 	Cvar_LazySet("vr_gamemode", gameMode ? 1 : 0);
 
-	return VR_InitFrame(engine);
+	/* Resize/reconfigure before locating this frame's immutable eye poses. */
+	Host_VRConfig();
+	bool ready = VR_InitFrame(engine);
+	if (engine->appState.ExitRequested) Sys_Quit("OpenXR session exited");
+	if (!ready) Host_VRButtonMapping(Cvar_VariableValue("cl_righthand") < 0.5f, 0, 0);
+	if (!ready && !engine->appState.SessionActive) SDL_Delay(10);
+	return ready;
+}
+
+static void Host_VRSetEyeValue(const char* name, float value)
+{
+	char text[32];
+	/* Q_atof does not parse scientific notation. Near-zero tracking noise
+	 * formatted with %g becomes metres of eye displacement when read back. */
+	VR_FormatPoseValue(text, value);
+	Cvar_FullSet(name, text, FCVAR_READ_ONLY);
 }
 
 void Host_VRClientFrame( void )
 {
 	engine_t* engine = VR_GetEngine();
 	for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
+		XrPosef head = VR_GetHead();
+		XrPosef view = VR_GetView(eye);
+		XrVector3f delta = {view.position.x - head.position.x, view.position.y - head.position.y, view.position.z - head.position.z};
+		XrQuaternionf inverseHead = XrQuaternionf_Inverse(head.orientation);
+		XrVector3f offset = XrQuaternionf_Rotate(inverseHead, delta);
+		XrQuaternionf relativeEye = XrQuaternionf_Multiply(inverseHead, view.orientation);
+		Host_VRSetEyeValue("vr_eye_qx", relativeEye.x);
+		Host_VRSetEyeValue("vr_eye_qy", relativeEye.y);
+		Host_VRSetEyeValue("vr_eye_qz", relativeEye.z);
+		Host_VRSetEyeValue("vr_eye_qw", relativeEye.w);
+		XrVector3f angles = XrQuaternionf_ToEulerAngles(XrQuaternionf_Multiply(inverseHead, view.orientation));
+#ifndef ANDROID
+		XrQuaternionf worldYaw = XrQuaternionf_CreateFromVectorAngle((XrVector3f){0, 1, 0}, ToRadians(vr_tracking_yaw));
+		angles = XrQuaternionf_ToEulerAngles(XrQuaternionf_Multiply(worldYaw, view.orientation));
+#endif
+		XrFovf fov = VR_GetEyeFov(eye);
+		Host_VRSetEyeValue("vr_eye_x", offset.x);
+		Host_VRSetEyeValue("vr_eye_y", offset.y);
+		Host_VRSetEyeValue("vr_eye_z", offset.z);
+		Host_VRSetEyeValue("vr_eye_pitch", angles.x);
+		Host_VRSetEyeValue("vr_eye_yaw", angles.y);
+		Host_VRSetEyeValue("vr_eye_roll", angles.z);
+		Host_VRSetEyeValue("vr_eye_left", tanf(fov.angleLeft));
+		Host_VRSetEyeValue("vr_eye_right", tanf(fov.angleRight));
+		Host_VRSetEyeValue("vr_eye_down", tanf(fov.angleDown));
+		Host_VRSetEyeValue("vr_eye_up", tanf(fov.angleUp));
 		Cvar_SetValue("vr_stereo_side", eye);
+		if (getenv("CSVR_XR_TRACE") && engine->frameIndex >= 649 && engine->frameIndex <= 651)
+			printf("XR geometry frame=%llu eye=%d pose=(%.4f %.4f %.4f) q=(%.4f %.4f %.4f %.4f) head=(%.4f %.4f %.4f) worldYaw=%.3f angles=(%.3f %.3f %.3f) offset=(%.4f %.4f %.4f) fov=(%.4f %.4f %.4f %.4f)\n", (unsigned long long)engine->frameIndex, eye, view.position.x, view.position.y, view.position.z, view.orientation.x, view.orientation.y, view.orientation.z, view.orientation.w, head.position.x, head.position.y, head.position.z, Cvar_VariableValue("vr_hmd_yaw") - XrQuaternionf_ToEulerAngles(head.orientation).y, angles.x, angles.y, angles.z, offset.x, offset.y, offset.z, fov.angleLeft, fov.angleRight, fov.angleDown, fov.angleUp);
 		VR_BeginFrame(engine, eye);
 		Host_ClientFrame();
 		VR_EndFrame(engine, eye);
@@ -298,15 +358,25 @@ void Host_VRInputFrame( void )
 	bool rightHanded = Cvar_VariableValue("cl_righthand") > 0;
 	int primaryController = rightHanded ? 1 : 0;
 	int secondaryController = rightHanded ? 0 : 1;
-	XrPosef hmd = VR_GetView(0);
+	XrPosef hmd = VR_GetHead();
 	XrPosef hand = IN_VRGetPose(secondaryController);
 	XrPosef weapon = IN_VRGetPose(primaryController);
+#ifndef ANDROID
+	/* An untracked controller is not an identity-pose aiming device. */
+	if (!IN_VRIsActive(primaryController)) weapon = hmd;
+	if (!IN_VRIsActive(secondaryController)) hand = hmd;
+#endif
 	XrVector3f angles = XrQuaternionf_ToEulerAngles(weapon.orientation);
 	bool cursorActive = IN_VRIsActive(primaryController);
 	unsigned int lbuttons = IN_VRGetButtonState(secondaryController);
 	unsigned int rbuttons = IN_VRGetButtonState(primaryController);
 	XrVector2f left = IN_VRGetJoystickState(secondaryController);
 	XrVector2f right = IN_VRGetJoystickState(primaryController);
+#ifndef ANDROID
+	float turnDeadzone = Cvar_VariableValue("vr_thumbstick_deadzone_right");
+	if (fabsf(right.x) < turnDeadzone) right.x = 0;
+	if (fabsf(right.y) < turnDeadzone) right.y = 0;
+#endif
 
 	// Convert input data
 	bool zoomed = Cvar_VariableValue("vr_zoomed") > 0;
@@ -325,9 +395,21 @@ void Host_VRInputFrame( void )
 
 	// Menu control
 	vec2_t cursor = {};
-	bool gameMode = Host_VRConfig();
+	bool gameMode = Cvar_VariableValue("vr_gamemode") > 0.5f;
 	Host_VRCursor(cursorActive && (cls.key_dest != key_console), angles.x, angles.y, cursor);
 	bool pressedInUI = Host_VRMenuInput(cursorActive, gameMode, !rightHanded, lbuttons, rbuttons, cursor);
+#ifndef ANDROID
+	if (gameMode && cl.paused) {
+		left = right = (XrVector2f){0, 0};
+		lbuttons = rbuttons = 0;
+	}
+	if (gameMode && pressedInUI) {
+		Host_VRButtonMapping(!rightHanded, 0, 0);
+		clgame.dllFuncs.pfnMoveEvent(0, 0);
+		Host_VRRotations(zoomed && !zoomfix, handAngles, hmdAngles, hmdPosition, weaponAngles, 0, 0);
+		return;
+	}
+#endif
 
 	// Do not pass button actions which started in UI
 	if (gameMode && pressedInUI) {
@@ -342,17 +424,23 @@ void Host_VRInputFrame( void )
 		if (Host_VRWeaponCalibration(right.x, right.y)) {
 			right.x = 0;
 			right.y = 0;
+#ifdef ANDROID
 		} else {
 			right.x = vr_input[0];
 			right.y = vr_input[1];
+#endif
 		}
-		Host_VRWeaponCrosshair(zoomed && !zoomfix);
+		if (!cl.paused) {
 		Host_VRMotionControls(zoomed, superzoomed, handActive, hmdAngles, handPosition, hmdPosition, weaponPosition);
 		Host_VRMovementPlayer(hmdAngles, hmdPosition, weaponAngles, left.x, left.y);
 		Host_VRMovementEntity(zoomed && !zoomfix, handPosition, hmdAngles, hmdPosition, weaponPosition);
+		}
 		Host_VRRotations(zoomed && !zoomfix, handAngles, hmdAngles, hmdPosition, weaponAngles, right.x, right.y);
 	} else {
 		// Measure player when not in game mode
+#ifndef ANDROID
+		vr_tracking_anchored = false;
+#endif
 		vr_hmd_offset[2] = hmd.position.y;
 
 		// No game actions when UI is shown
@@ -510,19 +598,13 @@ void Host_VRBUttonMaskThumbstick( float x, float y, unsigned int* buttons )
 {
 	float deadzone = Cvar_VariableValue("vr_thumbstick_deadzone_right");
 
-	static struct timeval lastActive;
-	if ((fabs(x) > deadzone) || (fabs(y) > deadzone)) {
-		gettimeofday(&lastActive, NULL);
-	}
-	struct timeval currentTime;
-	gettimeofday(&currentTime, NULL);
-
-	if (currentTime.tv_sec - lastActive.tv_sec < 1) {
-		*buttons = *buttons & ~ovrButton_Joystick;
-	}
+	static Uint64 lastActive;
+	Uint64 now = SDL_GetTicks64();
+	if ((fabs(x) > deadzone) || (fabs(y) > deadzone)) lastActive = now;
+	if (now - lastActive < 1000) *buttons &= ~ovrButton_Joystick;
 }
 
-bool Host_VRConfig()
+bool Host_VRConfig(void)
 {
 	// Update refresh rate if needed
 	static int lastRefreshRate = 72;
@@ -569,6 +651,11 @@ bool Host_VRConfig()
 	Cvar_LazySet("hud_scale", 2);
 	Cvar_LazySet("touch_enable", 0);
 	Cvar_LazySet("xhair_enable", 1);
+#ifndef ANDROID
+	/* The mobile VGUI replacement consists of touch-only scripts. */
+	Cvar_LazySet("_vgui_menus", 0);
+	Cvar_LazySet("_extended_menus", 0);
+#endif
 
 	// Ensure voice input is enabled
 	Cvar_LazySet("sv_voicequality", 5);
@@ -689,6 +776,55 @@ void Host_VRHaptics( bool rightHanded, vec3_t weaponAngles )
 
 bool Host_VRMenuInput( bool cursorActive, bool gameMode, bool swapped, int lbuttons, int rbuttons, vec2_t cursor )
 {
+#ifndef ANDROID
+	static xr_menu_state navigation;
+	static bool lastEscape, lastStickClick;
+	static unsigned capturedLeft, capturedRight;
+	unsigned slots = (unsigned)Cvar_VariableValue("vr_menu_slots") & 0x3ff;
+	bool scriptedMenu = Touch_MenuActive();
+	bool textMenu = gameMode && !scriptedMenu && slots != 0;
+	bool active = !gameMode || textMenu || scriptedMenu;
+	if (getenv("CSVR_XR_TRACE")) {
+		static int lastContext=-1;
+		int context=scriptedMenu ? -4 : textMenu ? (int)slots : active ? -2 : -3;
+		if (context!=lastContext) printf("XR menu context=%s validSlots=0x%x paused=%d\n", scriptedMenu ? "scripted" : textMenu ? "numeric" : active ? "desktop" : "game", slots, cl.paused);
+		lastContext=context;
+	}
+	XrVector2f a=IN_VRGetJoystickState(0), b=IN_VRGetJoystickState(1);
+	XrVector2f stick = a.x*a.x+a.y*a.y >= b.x*b.x+b.y*b.y ? a : b;
+	bool confirm = (rbuttons & ovrButton_Trigger) != 0;
+	bool back = ((lbuttons | rbuttons) & (ovrButton_B | ovrButton_Y)) != 0;
+	bool escape = ((lbuttons | rbuttons) & ovrButton_Enter) != 0;
+	unsigned events = XRMenu_Update(&navigation, active, stick.x, stick.y, confirm, back, Sys_DoubleTime());
+	bool stickClick=(lbuttons & ovrButton_Joystick)!=0;
+	if (scriptedMenu && ((escape && !lastEscape) || (stickClick && !lastStickClick))) events|=XR_MENU_BACK;
+	lastStickClick=stickClick;
+	VR_SetConfig(VR_CONFIG_MOUSE_SIZE, 0);
+	if (active) { capturedLeft|=lbuttons; capturedRight|=rbuttons; }
+	capturedLeft &= lbuttons; capturedRight &= rbuttons;
+	if (scriptedMenu) {
+		Touch_MenuInput(events);
+	} else if (textMenu) {
+		int selected=(int)Cvar_VariableValue("vr_menu_selection");
+		if (selected<1 || selected>10 || !(slots & (1u<<(selected-1)))) selected=XRMenu_NextSlot(slots, 0, 1);
+		if (events & XR_MENU_UP) selected=XRMenu_NextSlot(slots, selected, -1);
+		if (events & XR_MENU_DOWN) selected=XRMenu_NextSlot(slots, selected, 1);
+		Cvar_SetValue("vr_menu_selection", selected);
+		if (events & XR_MENU_CONFIRM) {
+			char command[32]; Q_snprintf(command, sizeof(command), "slot%d\n", selected);
+			if (getenv("CSVR_XR_TRACE")) printf("XR menu confirm slot=%d\n", selected);
+			Cbuf_AddText(command);
+		}
+		if ((events & XR_MENU_BACK) || (escape && !lastEscape)) Cbuf_AddText("menuselect 10\nclient_buy_close\n");
+	} else if (active) {
+		const unsigned flags[]={XR_MENU_UP, XR_MENU_DOWN, XR_MENU_LEFT, XR_MENU_RIGHT, XR_MENU_CONFIRM, XR_MENU_BACK};
+		const int keys[]={K_UPARROW, K_DOWNARROW, K_LEFTARROW, K_RIGHTARROW, K_ENTER, K_ESCAPE};
+		for (int i=0;i<6;++i) if (events & flags[i]) { Key_Event(keys[i], true); Key_Event(keys[i], false); }
+	}
+	if (!textMenu && !scriptedMenu && escape && !lastEscape) { Key_Event(K_ESCAPE, true); Key_Event(K_ESCAPE, false); }
+	lastEscape=escape;
+	return active || capturedLeft || capturedRight;
+#else
 	// Send enter when Keyboard released
 	static bool hadFocus = true;
 	static bool keyboardShown = false;
@@ -769,6 +905,7 @@ bool Host_VRMenuInput( bool cursorActive, bool gameMode, bool swapped, int lbutt
 	lastThumbstick = thumbstick;
 
 	return pressedInUI;
+#endif
 }
 
 void Host_VRMotionControls( bool zoomed, bool superzoomed, bool motionActive, vec3_t hmdAngles, vec3_t handPosition, vec3_t hmdPosition, vec3_t weaponPosition)
@@ -964,7 +1101,13 @@ void Host_VRMovementPlayer( vec3_t hmdAngles, vec3_t hmdPosition, vec3_t weaponA
 	currentPosition[2] = Cvar_VariableValue("vr_player_pos_z");
 	if (VectorDistance(currentPosition, lastPosition) > scale) {
 		Cvar_SetValue("vr_vignette_amount", 1);
-		VR_Recenter(VR_GetEngine());
+#ifdef ANDROID
+		VR_SetConfig(VR_CONFIG_NEED_RECENTER, true);
+#else
+		/* A server teleport must not rotate the OpenXR reference space. */
+		vr_hmd_offset[0] = -hmdPosition[0];
+		vr_hmd_offset[1] = -hmdPosition[2];
+#endif
 		reset = true;
 	}
 
@@ -1058,13 +1201,47 @@ void Host_VRMovementPlayer( vec3_t hmdAngles, vec3_t hmdPosition, vec3_t weaponA
 	}
 
 	// Update client
-	clgame.dllFuncs.pfnMoveEvent( thumbstickY, thumbstickX );
+	if (!cl.paused) clgame.dllFuncs.pfnMoveEvent( thumbstickY, thumbstickX );
 	VectorCopy(currentPosition, lastPosition);
 	lastMove6Dof = move6DoF;
 }
 
 void Host_VRRotations( bool zoomed, vec3_t handAngles, vec3_t hmdAngles, vec3_t hmdPosition, vec3_t weaponAngles, float thumbstickX, float thumbstickY )
 {
+#ifndef ANDROID
+	{
+	/* Keep tracking-to-world heading independent of render passes, recoil and
+	 * controller angle wrap. The client consumes relative aim once per frame. */
+	if (!vr_tracking_anchored) {
+		vr_tracking_yaw = cl.viewangles[YAW] - weaponAngles[YAW];
+		vr_tracking_anchored = true;
+	}
+	static bool turnHeld;
+	bool turn = fabsf(thumbstickX) > 0.5f;
+	bool smooth = Cvar_VariableValue("vr_turn_type") > 0.5f;
+	if (turn && (smooth || !turnHeld)) {
+		float step = Cvar_VariableValue("vr_turn_angle");
+		if (smooth) step *= 2.0f * (float)host.frametime;
+		vr_tracking_yaw += thumbstickX > 0 ? -step : step;
+	}
+	turnHeld = turn;
+	float yaw = remainderf(vr_tracking_yaw + weaponAngles[YAW] - cl.viewangles[YAW], 360.0f);
+	float pitch = weaponAngles[PITCH] - cl.viewangles[PITCH];
+	if (!cl.paused) clgame.dllFuncs.pfnLookEvent(yaw, pitch);
+	Cvar_SetValue("vr_weapon_roll", weaponAngles[ROLL]);
+	Cvar_SetValue("vr_hand_pitch", handAngles[PITCH]);
+	Cvar_SetValue("vr_hand_yaw", remainderf(handAngles[YAW] - weaponAngles[YAW], 360.0f));
+	Cvar_SetValue("vr_hand_roll", handAngles[ROLL]);
+	Cvar_SetValue("vr_hmd_pitch", hmdAngles[PITCH]);
+	Cvar_SetValue("vr_hmd_yaw", hmdAngles[YAW] + vr_tracking_yaw);
+	Cvar_SetValue("vr_hmd_roll", hmdAngles[ROLL]);
+	static bool changeHeld;
+	bool change = fabsf(thumbstickY) > 0.5f;
+	if (change && !changeHeld) Cbuf_AddText(thumbstickY > 0 ? "invnext\n" : "invprev\n");
+	changeHeld = change;
+	return;
+	}
+#endif
 	// Weapon rotation
 	static float lastYaw = 0;
 	static float lastPitch = 0;
@@ -1214,6 +1391,20 @@ void Host_VRWeaponCrosshair( bool zoomed )
 	if (!zoomed) {
 		TriWorldToScreen(vecEnd, screenPos);
 	}
+#ifndef ANDROID
+	{
+		float eye[3]={Cvar_VariableValue("vr_eye_x"), Cvar_VariableValue("vr_eye_y"), Cvar_VariableValue("vr_eye_z")};
+		float q[4]={Cvar_VariableValue("vr_eye_qx"), Cvar_VariableValue("vr_eye_qy"), Cvar_VariableValue("vr_eye_qz"), Cvar_VariableValue("vr_eye_qw")};
+		float fov[4]={Cvar_VariableValue("vr_eye_left"), Cvar_VariableValue("vr_eye_right"), Cvar_VariableValue("vr_eye_down"), Cvar_VariableValue("vr_eye_up")};
+		float matrix[4][4], px, py;
+		XRUI_Projection(matrix, refState.width, refState.height,
+			Q_max(0.25f,Cvar_VariableValue("vr_hud_distance")), Q_max(0.1f,Cvar_VariableValue("vr_hud_width")), eye, q, fov);
+		if (XRUI_PixelFromNDC(matrix, screenPos[0], screenPos[1], &px, &py)) {
+			screenPos[0]=2*px/refState.width-1;
+			screenPos[1]=1-2*py/refState.height;
+		} else visible=false;
+	}
+#endif
 	Cvar_SetValue("vr_xhair_x", visible ? screenPos[0] : INT_MAX);
 	Cvar_SetValue("vr_xhair_y", visible ? screenPos[1] : INT_MAX);
 }

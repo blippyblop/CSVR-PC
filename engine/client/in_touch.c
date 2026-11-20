@@ -18,6 +18,11 @@ GNU General Public License for more details.
 #include "math.h"
 #include "vgui_draw.h"
 #include "mobility_int.h"
+#include "xr_menu.h"
+
+static void Touch_MenuNavigate_f(void);
+static void Touch_MenuActivate_f(void);
+static void Touch_MenuBack_f(void);
 
 typedef enum
 {
@@ -122,6 +127,8 @@ static struct touch_s
 
 	// other features
 	qboolean clientonly;
+	char menu_focus[32];
+	char menu_group[64];
 	rgba_t scolor;
 	int swidth;
 	qboolean precision;
@@ -531,6 +538,7 @@ void Touch_SetClientOnly( byte state )
 {
 	// TODO: fix clash with vgui cursors
 	touch.clientonly = state;
+	if (!state) { touch.menu_focus[0]=0; touch.menu_group[0]=0; }
 
 	touch.resize_finger = touch.move_finger = touch.look_finger = touch.wheel_finger = -1;
 	touch.forward = touch.side = 0;
@@ -1141,6 +1149,9 @@ void Touch_Init( void )
 	Cmd_AddRestrictedCommand( "touch_exportconfig", Touch_ExportConfig_f, "export config keeping aspect ratio" );
 	Cmd_AddRestrictedCommand( "touch_set_stroke", Touch_Stroke_f, "set global stroke width and color" );
 	Cmd_AddRestrictedCommand( "touch_setclientonly", Touch_SetClientOnly_f, "when 1, only client buttons are shown" );
+	Cmd_AddRestrictedCommand("touch_menu_nav", Touch_MenuNavigate_f, "navigate a scripted menu: up/down/left/right");
+	Cmd_AddRestrictedCommand("touch_menu_activate", Touch_MenuActivate_f, "activate the focused scripted menu item");
+	Cmd_AddRestrictedCommand("touch_menu_back", Touch_MenuBack_f, "close the scripted menu");
 	Cmd_AddRestrictedCommand( "touch_reloadconfig", Touch_ReloadConfig_f, "load config, not saving changes" );
 	Cmd_AddRestrictedCommand( "touch_writeconfig", Touch_WriteConfig, "save current config" );
 	Cmd_AddRestrictedCommand( "touch_deleteprofile", Touch_DeleteProfile_f, "delete profile by name" );
@@ -1245,6 +1256,73 @@ static qboolean Touch_IsVisible( touch_button_t *button )
 
 	return true;
 }
+
+static qboolean Touch_MenuItem(touch_button_t* button)
+{
+	return Touch_IsVisible(button) && button->type==touch_command && button->command[0]
+		&& !Q_strncmp(button->name,"_menu_",6) && button->texture[0]!='#'
+		&& button->x2>button->x1 && button->y2>button->y1
+		&& (button->x2-button->x1)*(button->y2-button->y1)<.95f;
+}
+
+qboolean Touch_MenuActive(void)
+{
+	if (!touch.initialized || touch.state!=state_none || cls.key_dest!=key_game) return false;
+	for (touch_button_t* b=touch.list_user.first;b;b=b->next) if (Touch_MenuItem(b)) return true;
+	return false;
+}
+
+static qboolean Touch_ButtonPress(touchbuttonlist_t* list, touchEventType type, int fingerID, float x, float y);
+
+void Touch_MenuInput(unsigned events)
+{
+	if (!Touch_MenuActive()) return;
+	if (!touch.clientonly) Touch_SetClientOnly(1);
+	if (events & XR_MENU_BACK) { Cbuf_AddText("_erase_frame\ntouch_setclientonly 0\n"); return; }
+	touch_button_t* buttons[256];
+	xr_menu_rect rectangles[256];
+	int count=0, selected=-1;
+	const char* group=Cvar_VariableString("_menu_id");
+	qboolean changed=Q_strcmp(group,touch.menu_group)!=0;
+	for (touch_button_t* b=touch.list_user.first;b && count<256;b=b->next) {
+		if (!Touch_MenuItem(b)) continue;
+		buttons[count]=b;
+		rectangles[count]=(xr_menu_rect){b->x1,b->y1,b->x2,b->y2};
+		if (!changed && !Q_strcmp(b->name,touch.menu_focus)) selected=count;
+		++count;
+	}
+	if (!count) return;
+	if (selected<0) {
+		/* New child panels receive focus without discarding the parent panel. */
+		for (int i=0;i<count;++i) if (group[0] && Q_strstr(buttons[i]->name,group)) { selected=i; break; }
+		if (selected<0) selected=0;
+	}
+	const unsigned directions[]={XR_MENU_UP,XR_MENU_DOWN,XR_MENU_LEFT,XR_MENU_RIGHT};
+	for (int i=0;i<4;++i) if (events & directions[i]) selected=XRMenu_Neighbor(rectangles,count,selected,directions[i]);
+	touch_button_t* button=buttons[selected];
+	if (Q_strcmp(touch.menu_focus,button->name) && getenv("CSVR_XR_TRACE"))
+		Con_DPrintf("Scripted menu focus: %s\n",button->name);
+	Q_strncpy(touch.menu_focus,button->name,sizeof(touch.menu_focus));
+	Q_strncpy(touch.menu_group,group,sizeof(touch.menu_group));
+	if (events & XR_MENU_CONFIRM) {
+		/* Use the normal hit-testing/command path, including privilege filtering
+		 * and +command releases. Commands are queued before scripts rebuild it. */
+		float x=(button->x1+button->x2)*.5f, y=(button->y1+button->y2)*.5f;
+		Touch_ButtonPress(&touch.list_user,event_down,0x7ffffffe,x,y);
+		Touch_ButtonPress(&touch.list_user,event_up,0x7ffffffe,x,y);
+	}
+}
+
+static void Touch_MenuNavigate_f(void)
+{
+	const char* direction=Cmd_Argv(1);
+	if (!Q_strcmp(direction,"up")) Touch_MenuInput(XR_MENU_UP);
+	else if (!Q_strcmp(direction,"down")) Touch_MenuInput(XR_MENU_DOWN);
+	else if (!Q_strcmp(direction,"left")) Touch_MenuInput(XR_MENU_LEFT);
+	else if (!Q_strcmp(direction,"right")) Touch_MenuInput(XR_MENU_RIGHT);
+}
+static void Touch_MenuActivate_f(void) { Touch_MenuInput(XR_MENU_CONFIRM); }
+static void Touch_MenuBack_f(void) { Touch_MenuInput(XR_MENU_BACK); }
 
 static void Touch_DrawTexture( float x1, float y1, float x2, float y2, int texture, byte *color )
 {
@@ -1514,6 +1592,15 @@ void Touch_Draw( void )
 	}
 
 	Touch_DrawButtons( &touch.list_user );
+	if (Touch_MenuActive()) for (touch_button_t* b=touch.list_user.first;b;b=b->next) {
+		if (!Touch_MenuItem(b) || Q_strcmp(b->name,touch.menu_focus)) continue;
+		float x=TO_SCRN_X(b->x1), y=TO_SCRN_Y(b->y1), w=TO_SCRN_X(b->x2-b->x1), h=TO_SCRN_Y(b->y2-b->y1);
+		ref.dllFuncs.FillRGBA(kRenderTransTexture,x,y,w,4,255,215,64,255);
+		ref.dllFuncs.FillRGBA(kRenderTransTexture,x,y+h-4,w,4,255,215,64,255);
+		ref.dllFuncs.FillRGBA(kRenderTransTexture,x,y,4,h,255,215,64,255);
+		ref.dllFuncs.FillRGBA(kRenderTransTexture,x+w-4,y,4,h,255,215,64,255);
+		break;
+	}
 
 	if( touch.state >= state_edit )
 	{
@@ -2254,6 +2341,9 @@ void Touch_Shutdown( void )
 	Cmd_RemoveCommand( "touch_exportconfig" );
 	Cmd_RemoveCommand( "touch_set_stroke" );
 	Cmd_RemoveCommand( "touch_setclientonly" );
+	Cmd_RemoveCommand("touch_menu_nav");
+	Cmd_RemoveCommand("touch_menu_activate");
+	Cmd_RemoveCommand("touch_menu_back");
 	Cmd_RemoveCommand( "touch_reloadconfig" );
 	Cmd_RemoveCommand( "touch_writeconfig" );
 	Cmd_RemoveCommand( "touch_generate_code" );

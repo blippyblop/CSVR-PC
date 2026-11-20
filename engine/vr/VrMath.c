@@ -1,8 +1,15 @@
 #define _USE_MATH_DEFINES
 
 #include <string.h>
+#include <stdio.h>
 #include "VrMath.h"
-#include "mathlib.h"
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+void VR_FormatPoseValue(char text[32], float value) {
+	snprintf(text, 32, "%.9f", value);
+}
 
 float ToDegrees(float rad) {
 	return (float)(rad / M_PI * 180.0f);
@@ -36,7 +43,7 @@ XrPosef
 ================================================================================
 */
 
-XrPosef XrPosef_Identity() {
+XrPosef XrPosef_Identity(void) {
        XrPosef r;
        r.orientation.x = 0;
        r.orientation.y = 0;
