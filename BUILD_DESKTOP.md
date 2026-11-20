@@ -21,6 +21,9 @@ export PKG_CONFIG_PATH="$CSVR_LINUX_SDK/lib/pkgconfig"
 export LD_LIBRARY_PATH="$CSVR_LINUX_SDK/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 ```
 
+Engine codecs use pinned bundled dependencies to avoid distro-specific optional
+library SONAMEs (for example Ubuntu's `libbz2.so.1.0` versus Fedora's library).
+
 ```sh
 python3 scripts/desktop/check-openxr-preservation.py
 ./scripts/desktop/build-engine.sh linux

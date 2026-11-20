@@ -10,7 +10,7 @@ case "$target" in
   linux)
     export CC=${CC:-clang} CXX=${CXX:-clang++}
     python3 waf configure -8 -T release --disable-vgui --disable-soft --disable-engine-mainui \
-      --prefix=/usr -o "$build_dir" "$@"
+      --enable-bundled-deps --prefix=/usr -o "$build_dir" "$@"
     ;;
   windows)
     : "${CSVR_LLVM_MINGW:?Set CSVR_LLVM_MINGW to an extracted LLVM-MinGW toolchain}"
